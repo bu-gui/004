@@ -1,0 +1,22 @@
+idf_component_register(SRCS
+    main.c
+    i2c_bus.c
+    max30102.c
+    mpu6050.c
+    ssd1306.c
+    w25q32.c
+    heart_rate.c
+    spo2.c
+    step_counter.c
+    calorie.c
+    fall_detector.c
+    motion_classifier.c
+    arrhythmia_screener.c
+    sleep_analyzer.c
+    ble.c
+    wifi_conn.c
+    deepseek_api.c
+    actuator.c
+    power_mgmt.c
+    INCLUDE_DIRS ../include
+)

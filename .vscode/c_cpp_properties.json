@@ -1,0 +1,21 @@
+{
+    "configurations": [
+        {
+            "name": "PlatformIO ESP32-S3",
+            "includePath": [
+                "${workspaceFolder}/firmware/src",
+                "${workspaceFolder}/firmware/include"
+            ],
+            "defines": [],
+            "compilerPath": "",
+            "cStandard": "c11",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "clang-x64",
+            "browse": {
+                "limitSymbolsToIncludedHeaders": true,
+                "databaseFilename": ""
+            }
+        }
+    ],
+    "version": 4
+}
