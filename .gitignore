@@ -1,0 +1,85 @@
+# 通用忽略文件
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+*.temp
+*.swp
+*~
+~*
+
+# 环境变量文件
+.env
+.env.local
+.env.*.local
+
+# IDE文件
+.vscode/  # 已提交的VSCode配置需要保留，但可以忽略用户特定设置
+.idea/
+*.swp
+*.swo
+
+# 操作系统文件
+ehthumbs.db
+Desktop.ini
+
+# 项目特定忽略
+
+# Flutter项目 (app/) 已有自己的.gitignore
+# ESP32/PlatformIO固件项目构建文件
+.pio/
+.pioenvs/
+.piolibdeps/
+.piolib/
+.pio/build/
+.pio/libdeps/
+.pio/.gcc-flags.json
+
+# PlatformIO相关
+platformio.ini.local
+
+# 编译输出
+build/
+dist/
+*.bin
+*.elf
+*.hex
+*.map
+
+# 依赖目录
+node_modules/  # 如果有前端部分
+__pycache__/
+*.py[cod]
+
+# 日志文件
+logs/
+*.log
+
+# 临时文件
+temp/
+tmp/
+
+# 系统文件
+*.sys
+*.dll
+*.exe
+
+# 文档生成
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# 测试覆盖
+coverage/
+*.lcov
+
+# 本地开发配置
+local.properties
+local_settings.py
+settings_local.py
+
+# 密钥文件
+*.pem
+*.key
+*.crt
+*.cer
