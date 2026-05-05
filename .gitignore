@@ -25,6 +25,9 @@ Desktop.ini
 
 # 项目特定忽略
 
+# 计划/设计文档（不上传远程仓库）
+计划/
+
 # Flutter项目 (app/) 已有自己的.gitignore
 # ESP32/PlatformIO固件项目构建文件
 .pio/
