@@ -9,6 +9,7 @@
 #include "esp_log.h"
 #include "esp_sleep.h"
 #include "esp_timer.h"
+#include "esp_task_wdt.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -58,6 +59,7 @@ static QueueHandle_t sensor_data_queue;
 static QueueHandle_t display_update_queue;
 static QueueHandle_t alert_queue;
 static SemaphoreHandle_t i2c_mutex;
+static SemaphoreHandle_t status_mutex;
 static system_status_t sys_status;
 static int64_t last_display_update;
 static int64_t last_wifi_sync;
@@ -70,6 +72,14 @@ static void sensor_task(void *pvParameter)
     heart_rate_result_t hr_result;
     spo2_result_t sp_result;
     step_counter_t step_result;
+
+    static bool mpu_calibrated = false;
+    if (!mpu_calibrated) {
+        xSemaphoreTake(i2c_mutex, portMAX_DELAY);
+        mpu6050_calibrate();
+        xSemaphoreGive(i2c_mutex);
+        mpu_calibrated = true;
+    }
 
     while (1) {
         xSemaphoreTake(i2c_mutex, portMAX_DELAY);
@@ -89,16 +99,33 @@ static void sensor_task(void *pvParameter)
         xSemaphoreGive(i2c_mutex);
 
         heart_rate_get_result(&hr_result);
-        if (hr_result.data_ready) sys_status.heart_rate = hr_result.bpm;
-
         spo2_get_result(&sp_result);
-        if (sp_result.data_ready) sys_status.spo2 = sp_result.spo2;
-
         step_counter_get_result(&step_result);
-        sys_status.steps = step_result.total_steps;
 
-        sys_status.calories = calorie_get_total();
-        sys_status.motion = motion_classifier_get_result();
+        if (hr_result.data_ready && hr_result.bpm > 0) {
+            arrhythmia_screener_feed_rr_interval((uint32_t)(60000.0f / hr_result.bpm));
+        }
+
+        calorie_update_steps(step_result.total_steps);
+        if (hr_result.data_ready) {
+            calorie_update_heart_rate(hr_result.bpm);
+        }
+
+        motion_classifier_process();
+        motion_type_t current_motion = motion_classifier_get_result();
+        calorie_update_motion_type(current_motion);
+
+        fall_detector_process();
+
+        float calorie_total = 0.0f;
+        calorie_get_total(&calorie_total);
+
+        xSemaphoreTake(status_mutex, portMAX_DELAY);
+        if (hr_result.data_ready) sys_status.heart_rate = hr_result.bpm;
+        if (sp_result.data_ready) sys_status.spo2 = sp_result.spo2;
+        sys_status.steps = step_result.total_steps;
+        sys_status.calories = calorie_total;
+        sys_status.motion = current_motion;
         sys_status.fall = fall_detector_get_state();
         sys_status.battery = power_mgmt_get_battery_percent();
 
@@ -107,6 +134,9 @@ static void sensor_task(void *pvParameter)
             xQueueSend(alert_queue, &alert, 0);
             sys_status.fall_alert_sent = true;
         }
+        xSemaphoreGive(status_mutex);
+
+        esp_task_wdt_reset();
 
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -120,6 +150,7 @@ static void display_task(void *pvParameter)
     while (1) {
         ssd1306_clear();
 
+        xSemaphoreTake(status_mutex, portMAX_DELAY);
         switch (page) {
             case 0:
                 snprintf(line, sizeof(line), "HR:%.0f SpO2:%d%%", sys_status.heart_rate, sys_status.spo2);
@@ -145,11 +176,14 @@ static void display_task(void *pvParameter)
             default:
                 break;
         }
+        xSemaphoreGive(status_mutex);
 
         ssd1306_display();
 
         page = (page + 1) % 3;
         last_display_update = esp_timer_get_time();
+
+        esp_task_wdt_reset();
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -158,6 +192,7 @@ static void display_task(void *pvParameter)
 static void comm_task(void *pvParameter)
 {
     while (1) {
+        xSemaphoreTake(status_mutex, portMAX_DELAY);
         if (ble_is_connected()) {
             ble_data_packet_t packet;
             packet.heart_rate = sys_status.heart_rate;
@@ -183,6 +218,11 @@ static void comm_task(void *pvParameter)
                 last_wifi_sync = now;
             }
         }
+        xSemaphoreGive(status_mutex);
+
+        if (wifi_enabled && !wifi_conn_is_connected()) {
+            wifi_conn_connect();
+        }
 
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
@@ -205,7 +245,9 @@ static void alert_task(void *pvParameter)
         vTaskDelay(pdMS_TO_TICKS(3000));
 
         fall_detector_acknowledge();
+        xSemaphoreTake(status_mutex, portMAX_DELAY);
         sys_status.fall_alert_sent = false;
+        xSemaphoreGive(status_mutex);
     }
 }
 
@@ -257,6 +299,7 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
 
     i2c_mutex = xSemaphoreCreateMutex();
+    status_mutex = xSemaphoreCreateMutex();
     sensor_data_queue = xQueueCreate(10, sizeof(int));
     display_update_queue = xQueueCreate(5, sizeof(int));
     alert_queue = xQueueCreate(5, sizeof(int));
@@ -279,6 +322,7 @@ void app_main(void)
     sleep_analyzer_init();
 
     ble_init();
+    wifi_conn_init();
     deepseek_api_init();
     actuator_init();
     power_mgmt_init();

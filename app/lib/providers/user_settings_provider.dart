@@ -16,6 +16,7 @@ class UserSettingsProvider extends ChangeNotifier {
   );
   DailyGoal _goal = DailyGoal(steps: 10000, calories: 2000.0, sleepHours: 8.0);
   bool _useImperial = false;
+  String _apiKey = '';
 
   UserProfile get profile => _profile;
   DailyGoal get goal => _goal;
@@ -29,6 +30,7 @@ class UserSettingsProvider extends ChangeNotifier {
   int get sleepGoal => _goal.sleepHours.toInt();
   bool get useImperialUnits => _useImperial;
   bool get isDeviceConnected => false;
+  String get apiKey => _apiKey;
 
   set height(double v) {
     _profile = UserProfile(
@@ -94,6 +96,10 @@ class UserSettingsProvider extends ChangeNotifier {
     _useImperial = v;
   }
 
+  set apiKey(String v) {
+    _apiKey = v;
+  }
+
   Future<void> loadSettings() async {
     try {
       final savedProfile = await _databaseService.loadUserProfile();
@@ -105,6 +111,8 @@ class UserSettingsProvider extends ChangeNotifier {
       if (savedGoal != null) {
         _goal = savedGoal;
       }
+
+      _apiKey = await _databaseService.getApiKey() ?? '';
 
       notifyListeners();
     } catch (_) {
@@ -136,6 +144,7 @@ class UserSettingsProvider extends ChangeNotifier {
     try {
       await _databaseService.saveUserProfile(_profile);
       await _databaseService.saveDailyGoal(_goal);
+      await _databaseService.saveApiKey(_apiKey);
       notifyListeners();
     } catch (_) {
       notifyListeners();

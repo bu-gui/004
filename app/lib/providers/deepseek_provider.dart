@@ -7,12 +7,24 @@ import 'package:smart_band/services/database_service.dart';
 import 'package:smart_band/services/deepseek_api_service.dart';
 
 class ChatMessage {
+  final String id;
   final String content;
   final bool isUser;
 
-  ChatMessage({required this.content, required this.isUser});
+  ChatMessage({required this.content, required this.isUser})
+    : id = _generateId();
 
-  Map<String, dynamic> toJson() => {'content': content, 'isUser': isUser};
+  static int _counter = 0;
+  static String _generateId() {
+    _counter++;
+    return 'msg_${DateTime.now().millisecondsSinceEpoch}_$_counter';
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'content': content,
+    'isUser': isUser,
+  };
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) => ChatMessage(
     content: json['content'] as String,

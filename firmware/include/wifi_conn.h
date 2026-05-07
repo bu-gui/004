@@ -3,8 +3,8 @@
 #include <stdbool.h>
 #include <esp_err.h>
 
-#define WIFI_SSID "YOUR_SSID"
-#define WIFI_PASS "YOUR_PASSWORD"
+#define WIFI_SSID "123456789"
+#define WIFI_PASS "123456789"
 
 typedef void (*wifi_conn_callback_t)(bool connected);
 

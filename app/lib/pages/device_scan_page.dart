@@ -18,9 +18,11 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _bleProvider = context.read<BleProvider>();
-    if (!_bleProvider.isScanning) {
-      _bleProvider.startScan();
-    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_bleProvider.isScanning) {
+        _bleProvider.startScan();
+      }
+    });
   }
 
   @override
@@ -191,12 +193,17 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
   }
 
   Widget _buildDeviceList(BuildContext context, BleProvider provider) {
+    // 按 RSSI 信号强度降序排序（信号强的排前面）
+    final sortedDevices = List<BleDevice>.from(provider.devices)
+      ..sort((a, b) => b.rssi.compareTo(a.rssi));
+
     return ListView.builder(
       padding: const EdgeInsets.all(16),
-      itemCount: provider.deviceList.length,
+      itemCount: sortedDevices.length,
       itemBuilder: (context, index) {
-        final device = provider.devices[index];
+        final device = sortedDevices[index];
         return Card(
+          key: ValueKey(device.macAddress),
           margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
             leading: Container(

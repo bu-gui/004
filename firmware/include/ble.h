@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <esp_err.h>
 
-typedef struct {
+typedef struct __attribute__((packed)) {
     float heart_rate;
     uint8_t spo2;
     uint32_t steps;

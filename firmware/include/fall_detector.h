@@ -11,6 +11,7 @@ typedef enum {
 
 esp_err_t fall_detector_init(void);
 esp_err_t fall_detector_feed_accel(float ax, float ay, float az);
+esp_err_t fall_detector_process(void);
 fall_state_t fall_detector_get_state(void);
 bool fall_detector_is_falling(void);
 esp_err_t fall_detector_acknowledge(void);

@@ -2,13 +2,16 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "spo2.h"
 
 #define BUFFER_SIZE 100
 #define HP_ALPHA 0.98f
 #define MIN_SPO2 70.0f
 #define MAX_SPO2 100.0f
+#define SIGNAL_THRESHOLD 100.0f
 
 typedef struct {
     float ir_buffer[BUFFER_SIZE];
@@ -21,16 +24,19 @@ typedef struct {
     float red_hp_prev;
     float ir_ac_prev;
     float red_ac_prev;
-    float spo2_value;
+    uint8_t spo2_value;
+    bool data_ready;
     int samples_collected;
 } spo2_ctx_t;
 
 static spo2_ctx_t spo2_ctx;
 
-void spo2_init(void)
+esp_err_t spo2_init(void)
 {
     memset(&spo2_ctx, 0, sizeof(spo2_ctx_t));
-    spo2_ctx.spo2_value = 95.0f;
+    spo2_ctx.spo2_value = 95;
+    spo2_ctx.data_ready = false;
+    return ESP_OK;
 }
 
 static float highpass(float input, float *prev, float *ac_prev)
@@ -41,7 +47,7 @@ static float highpass(float input, float *prev, float *ac_prev)
     return hp;
 }
 
-void spo2_feed_sample(uint32_t ir_raw, uint32_t red_raw)
+esp_err_t spo2_feed_sample(uint32_t ir_raw, uint32_t red_raw)
 {
     float ir_f = (float)ir_raw;
     float red_f = (float)red_raw;
@@ -71,17 +77,26 @@ void spo2_feed_sample(uint32_t ir_raw, uint32_t red_raw)
         if (ir_dc_val < 1.0f) ir_dc_val = 1.0f;
         if (red_dc_val < 1.0f) red_dc_val = 1.0f;
 
-        float R = (red_rms / red_dc_val) / (ir_rms / ir_dc_val);
-        float spo2 = 110.0f - 25.0f * R;
-        if (spo2 < MIN_SPO2) spo2 = MIN_SPO2;
-        if (spo2 > MAX_SPO2) spo2 = MAX_SPO2;
-        spo2_ctx.spo2_value = spo2;
+        if (ir_rms < SIGNAL_THRESHOLD || red_rms < SIGNAL_THRESHOLD) {
+            spo2_ctx.data_ready = false;
+        } else {
+            float R = (red_rms / red_dc_val) / (ir_rms / ir_dc_val);
+            float spo2 = 110.0f - 25.0f * R;
+            if (spo2 < MIN_SPO2) spo2 = MIN_SPO2;
+            if (spo2 > MAX_SPO2) spo2 = MAX_SPO2;
+            spo2_ctx.spo2_value = (uint8_t)spo2;
+            spo2_ctx.data_ready = true;
+        }
 
         spo2_ctx.samples_collected = 0;
     }
+    return ESP_OK;
 }
 
-float spo2_get_result(void)
+esp_err_t spo2_get_result(spo2_result_t *result)
 {
-    return spo2_ctx.spo2_value;
+    if (!result) return ESP_ERR_INVALID_ARG;
+    result->spo2 = spo2_ctx.spo2_value;
+    result->data_ready = spo2_ctx.data_ready;
+    return ESP_OK;
 }

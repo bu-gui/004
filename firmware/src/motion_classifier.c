@@ -14,6 +14,8 @@ static int buffer_head;
 static int buffer_count;
 static int frame_counter;
 static motion_type_t current_motion;
+static motion_type_t last_types[5];
+static int type_index;
 
 esp_err_t motion_classifier_init(void)
 {
@@ -22,6 +24,8 @@ esp_err_t motion_classifier_init(void)
     buffer_count = 0;
     frame_counter = 0;
     current_motion = MOTION_STATIC;
+    memset(last_types, 0, sizeof(last_types));
+    type_index = 0;
     return ESP_OK;
 }
 
@@ -71,7 +75,7 @@ static void compute_features(float *variance, float *dyn_range, int *zero_crossi
         if (mag > max_mag) max_mag = mag;
 
         if (i > 0) {
-            if ((prev_mag - 9.8f) * (mag - 9.8f) < 0) zc++;
+            if ((prev_mag - 9.8f) * (mag - 9.8f) <= 0) zc++;
         }
         prev_mag = mag;
     }
@@ -95,17 +99,37 @@ int motion_classifier_process(void)
     int zero_crossings;
     compute_features(&variance, &dyn_range, &zero_crossings);
 
+    motion_type_t raw_type;
     if (variance < 0.5f && dyn_range < 1.0f) {
-        current_motion = MOTION_STATIC;
+        raw_type = MOTION_STATIC;
     } else if (variance > 0.3f && variance < 2.0f &&
                dyn_range > 1.0f && dyn_range < 4.0f &&
                zero_crossings >= 5 && zero_crossings <= 20) {
-        current_motion = MOTION_WALKING;
+        raw_type = MOTION_WALKING;
     } else if (variance > 2.0f && dyn_range > 4.0f && zero_crossings > 15) {
-        current_motion = MOTION_RUNNING;
+        raw_type = MOTION_RUNNING;
     } else {
-        current_motion = MOTION_CYCLING;
+        raw_type = MOTION_CYCLING;
     }
+
+    last_types[type_index] = raw_type;
+    type_index = (type_index + 1) % 5;
+
+    int votes[4] = {0};
+    for (int i = 0; i < 5; i++) {
+        if (last_types[i] >= MOTION_STATIC && last_types[i] <= MOTION_CYCLING) {
+            votes[last_types[i]]++;
+        }
+    }
+    int max_votes = 0;
+    motion_type_t majority = raw_type;
+    for (int i = 0; i < 4; i++) {
+        if (votes[i] > max_votes) {
+            max_votes = votes[i];
+            majority = (motion_type_t)i;
+        }
+    }
+    current_motion = majority;
 
     return current_motion;
 }

@@ -62,10 +62,7 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
     final colorScheme = theme.colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('AI 健康助手'),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text('AI 健康助手'), centerTitle: true),
       body: Column(
         children: [
           Expanded(
@@ -126,12 +123,14 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
         final isUser = message.isUser;
 
         return Padding(
+          key: ValueKey(message.id),
           padding: EdgeInsets.only(
             bottom: index == provider.chatMessages.length - 1 ? 0 : 12,
           ),
           child: Row(
-            mainAxisAlignment:
-                isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+            mainAxisAlignment: isUser
+                ? MainAxisAlignment.end
+                : MainAxisAlignment.start,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               if (!isUser) ...[
@@ -162,12 +161,8 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
                     borderRadius: BorderRadius.only(
                       topLeft: const Radius.circular(20),
                       topRight: const Radius.circular(20),
-                      bottomLeft: Radius.circular(
-                        isUser ? 20 : 4,
-                      ),
-                      bottomRight: Radius.circular(
-                        isUser ? 4 : 20,
-                      ),
+                      bottomLeft: Radius.circular(isUser ? 20 : 4),
+                      bottomRight: Radius.circular(isUser ? 4 : 20),
                     ),
                   ),
                   child: Text(
@@ -269,10 +264,7 @@ class _AiAssistantPageState extends State<AiAssistantPage> {
       decoration: BoxDecoration(
         color: colorScheme.surface,
         border: Border(
-          top: BorderSide(
-            color: colorScheme.outlineVariant,
-            width: 0.5,
-          ),
+          top: BorderSide(color: colorScheme.outlineVariant, width: 0.5),
         ),
       ),
       child: Row(

@@ -16,6 +16,15 @@ class _HistoryPageState extends State<HistoryPage>
   late TabController _tabController;
   bool _isListViewMode = false;
 
+  static final FlBorderData _kNoBorder = FlBorderData(show: false);
+  static const AxisTitles _kHiddenTopTitles = AxisTitles(
+    sideTitles: SideTitles(showTitles: false),
+  );
+  static const AxisTitles _kHiddenRightTitles = AxisTitles(
+    sideTitles: SideTitles(showTitles: false),
+  );
+  static const FlDotData _kNoDots = FlDotData(show: false);
+
   @override
   void initState() {
     super.initState();
@@ -71,9 +80,86 @@ class _HistoryPageState extends State<HistoryPage>
     );
   }
 
+  BarChartData _buildBarChartData({
+    required ColorScheme colorScheme,
+    required double maxY,
+    required double horizontalInterval,
+    required List<BarChartGroupData> barGroups,
+    required AxisTitles bottomTitles,
+  }) {
+    return BarChartData(
+      alignment: BarChartAlignment.spaceAround,
+      maxY: maxY,
+      barTouchData: BarTouchData(
+        touchTooltipData: BarTouchTooltipData(
+          getTooltipItem: (group, groupIndex, rod, rodIndex) {
+            return BarTooltipItem(
+              '${rod.toY.toInt()} 步',
+              TextStyle(
+                color: colorScheme.onPrimary,
+                fontWeight: FontWeight.bold,
+              ),
+            );
+          },
+        ),
+      ),
+      titlesData: FlTitlesData(
+        show: true,
+        bottomTitles: bottomTitles,
+        leftTitles: AxisTitles(
+          sideTitles: SideTitles(
+            showTitles: true,
+            reservedSize: 40,
+            getTitlesWidget: (value, meta) {
+              return Text(
+                '${value.toInt()}',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              );
+            },
+          ),
+        ),
+        topTitles: _kHiddenTopTitles,
+        rightTitles: _kHiddenRightTitles,
+      ),
+      gridData: FlGridData(
+        show: true,
+        drawVerticalLine: false,
+        horizontalInterval: horizontalInterval,
+        getDrawingHorizontalLine: (value) {
+          return FlLine(
+            color: colorScheme.outlineVariant.withValues(alpha: 0.3),
+            strokeWidth: 1,
+          );
+        },
+      ),
+      borderData: _kNoBorder,
+      barGroups: barGroups,
+    );
+  }
+
   Widget _buildDayView(BuildContext context, HealthDataProvider provider) {
     final colorScheme = Theme.of(context).colorScheme;
     final hourlySteps = provider.getHourlySteps(0);
+
+    final barGroups = hourlySteps.asMap().entries.map((entry) {
+      return BarChartGroupData(
+        x: entry.key,
+        barRods: [
+          BarChartRodData(
+            toY: entry.value.toDouble(),
+            color: colorScheme.primary,
+            width: 10,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(4),
+              topRight: Radius.circular(4),
+            ),
+          ),
+        ],
+      );
+    }).toList();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -90,95 +176,33 @@ class _HistoryPageState extends State<HistoryPage>
           SizedBox(
             height: 220,
             child: BarChart(
-              BarChartData(
-                alignment: BarChartAlignment.spaceAround,
+              _buildBarChartData(
+                colorScheme: colorScheme,
                 maxY: _getMaxY(hourlySteps.map((e) => e.toInt()).toList()),
-                barTouchData: BarTouchData(
-                  touchTooltipData: BarTouchTooltipData(
-                    getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                      return BarTooltipItem(
-                        '${rod.toY.toInt()} 步',
-                        TextStyle(
-                          color: colorScheme.onPrimary,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                titlesData: FlTitlesData(
-                  show: true,
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      getTitlesWidget: (value, meta) {
-                        if (value.toInt() % 4 == 0) {
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 4),
-                            child: Text(
-                              '${value.toInt()}时',
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: colorScheme.onSurfaceVariant,
-                              ),
+                horizontalInterval:
+                    _getInterval(hourlySteps.map((e) => e.toInt()).toList()),
+                barGroups: barGroups,
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    getTitlesWidget: (value, meta) {
+                      if (value.toInt() % 4 == 0) {
+                        return Padding(
+                          padding: const EdgeInsets.only(top: 4),
+                          child: Text(
+                            '${value.toInt()}时',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: colorScheme.onSurfaceVariant,
                             ),
-                          );
-                        }
-                        return const SizedBox.shrink();
-                      },
-                      reservedSize: 22,
-                    ),
-                  ),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 40,
-                      getTitlesWidget: (value, meta) {
-                        return Text(
-                          '${value.toInt()}',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: colorScheme.onSurfaceVariant,
                           ),
                         );
-                      },
-                    ),
-                  ),
-                  topTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                  rightTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
+                      }
+                      return const SizedBox.shrink();
+                    },
+                    reservedSize: 22,
                   ),
                 ),
-                gridData: FlGridData(
-                  show: true,
-                  drawVerticalLine: false,
-                  horizontalInterval: _getInterval(hourlySteps.map((e) => e.toInt()).toList()),
-                  getDrawingHorizontalLine: (value) {
-                    return FlLine(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-                      strokeWidth: 1,
-                    );
-                  },
-                ),
-                borderData: FlBorderData(show: false),
-                barGroups: hourlySteps.asMap().entries.map((entry) {
-                  return BarChartGroupData(
-                    x: entry.key,
-                    barRods: [
-                      BarChartRodData(
-                        toY: entry.value.toDouble(),
-                        color: colorScheme.primary,
-                        width: 10,
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(4),
-                          topRight: Radius.circular(4),
-                        ),
-                      ),
-                    ],
-                  );
-                }).toList(),
               ),
             ),
           ),
@@ -197,6 +221,23 @@ class _HistoryPageState extends State<HistoryPage>
     final now = DateTime.now();
     final weekStart = now.subtract(Duration(days: now.weekday - 1));
 
+    final barGroups = weekData.asMap().entries.map((entry) {
+      return BarChartGroupData(
+        x: entry.key,
+        barRods: [
+          BarChartRodData(
+            toY: entry.value.toDouble(),
+            color: colorScheme.tertiary,
+            width: 18,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(4),
+              topRight: Radius.circular(4),
+            ),
+          ),
+        ],
+      );
+    }).toList();
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -212,94 +253,32 @@ class _HistoryPageState extends State<HistoryPage>
           SizedBox(
             height: 220,
             child: BarChart(
-              BarChartData(
-                alignment: BarChartAlignment.spaceAround,
+              _buildBarChartData(
+                colorScheme: colorScheme,
                 maxY: _getMaxY(weekData.map((e) => e.toInt()).toList()),
-                barTouchData: BarTouchData(
-                  touchTooltipData: BarTouchTooltipData(
-                    getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                      return BarTooltipItem(
-                        '${rod.toY.toInt()} 步',
-                        TextStyle(
-                          color: colorScheme.onPrimary,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                titlesData: FlTitlesData(
-                  show: true,
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      getTitlesWidget: (value, meta) {
-                        final day = weekStart
-                            .add(Duration(days: value.toInt()));
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            DateFormat('M/d').format(day),
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        );
-                      },
-                      reservedSize: 22,
-                    ),
-                  ),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 40,
-                      getTitlesWidget: (value, meta) {
-                        return Text(
-                          '${value.toInt()}',
+                horizontalInterval:
+                    _getInterval(weekData.map((e) => e.toInt()).toList()),
+                barGroups: barGroups,
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    getTitlesWidget: (value, meta) {
+                      final day =
+                          weekStart.add(Duration(days: value.toInt()));
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          DateFormat('M/d').format(day),
                           style: TextStyle(
                             fontSize: 10,
                             color: colorScheme.onSurfaceVariant,
                           ),
-                        );
-                      },
-                    ),
-                  ),
-                  topTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                  rightTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                ),
-                gridData: FlGridData(
-                  show: true,
-                  drawVerticalLine: false,
-                  horizontalInterval: _getInterval(weekData.map((e) => e.toInt()).toList()),
-                  getDrawingHorizontalLine: (value) {
-                    return FlLine(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-                      strokeWidth: 1,
-                    );
-                  },
-                ),
-                borderData: FlBorderData(show: false),
-                barGroups: weekData.asMap().entries.map((entry) {
-                  return BarChartGroupData(
-                    x: entry.key,
-                    barRods: [
-                      BarChartRodData(
-                        toY: entry.value.toDouble(),
-                        color: colorScheme.tertiary,
-                        width: 18,
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(4),
-                          topRight: Radius.circular(4),
                         ),
-                      ),
-                    ],
-                  );
-                }).toList(),
+                      );
+                    },
+                    reservedSize: 22,
+                  ),
+                ),
               ),
             ),
           ),
@@ -316,6 +295,23 @@ class _HistoryPageState extends State<HistoryPage>
     final colorScheme = Theme.of(context).colorScheme;
     final monthData = provider.getDailyStepsThisMonth();
 
+    final barGroups = monthData.asMap().entries.map((entry) {
+      return BarChartGroupData(
+        x: entry.key,
+        barRods: [
+          BarChartRodData(
+            toY: entry.value.toDouble(),
+            color: colorScheme.secondary,
+            width: 6,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(3),
+              topRight: Radius.circular(3),
+            ),
+          ),
+        ],
+      );
+    }).toList();
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -331,93 +327,31 @@ class _HistoryPageState extends State<HistoryPage>
           SizedBox(
             height: 220,
             child: BarChart(
-              BarChartData(
-                alignment: BarChartAlignment.spaceAround,
+              _buildBarChartData(
+                colorScheme: colorScheme,
                 maxY: _getMaxY(monthData.map((e) => e.toInt()).toList()),
-                barTouchData: BarTouchData(
-                  touchTooltipData: BarTouchTooltipData(
-                    getTooltipItem: (group, groupIndex, rod, rodIndex) {
-                      return BarTooltipItem(
-                        '${rod.toY.toInt()} 步',
-                        TextStyle(
-                          color: colorScheme.onPrimary,
-                          fontWeight: FontWeight.bold,
+                horizontalInterval:
+                    _getInterval(monthData.map((e) => e.toInt()).toList()),
+                barGroups: barGroups,
+                bottomTitles: AxisTitles(
+                  sideTitles: SideTitles(
+                    showTitles: true,
+                    interval: 5,
+                    getTitlesWidget: (value, meta) {
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '${value.toInt() + 1}日',
+                          style: TextStyle(
+                            fontSize: 9,
+                            color: colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       );
                     },
+                    reservedSize: 22,
                   ),
                 ),
-                titlesData: FlTitlesData(
-                  show: true,
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      interval: 5,
-                      getTitlesWidget: (value, meta) {
-                        return Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            '${value.toInt() + 1}日',
-                            style: TextStyle(
-                              fontSize: 9,
-                              color: colorScheme.onSurfaceVariant,
-                            ),
-                          ),
-                        );
-                      },
-                      reservedSize: 22,
-                    ),
-                  ),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 40,
-                      getTitlesWidget: (value, meta) {
-                        return Text(
-                          '${value.toInt()}',
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                  topTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                  rightTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: false),
-                  ),
-                ),
-                gridData: FlGridData(
-                  show: true,
-                  drawVerticalLine: false,
-                  horizontalInterval: _getInterval(monthData.map((e) => e.toInt()).toList()),
-                  getDrawingHorizontalLine: (value) {
-                    return FlLine(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.3),
-                      strokeWidth: 1,
-                    );
-                  },
-                ),
-                borderData: FlBorderData(show: false),
-                barGroups: monthData.asMap().entries.map((entry) {
-                  return BarChartGroupData(
-                    x: entry.key,
-                    barRods: [
-                      BarChartRodData(
-                        toY: entry.value.toDouble(),
-                        color: colorScheme.secondary,
-                        width: 6,
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.circular(3),
-                          topRight: Radius.circular(3),
-                        ),
-                      ),
-                    ],
-                  );
-                }).toList(),
               ),
             ),
           ),
@@ -433,11 +367,9 @@ class _HistoryPageState extends State<HistoryPage>
   Widget _buildHeartRateChart(
       BuildContext context, HealthDataProvider provider) {
     final colorScheme = Theme.of(context).colorScheme;
-    final spots = provider.getHeartRateTrend()
-        .asMap()
-        .entries
-        .map((e) => FlSpot(e.key.toDouble(), e.value))
-        .toList();
+    final spots = provider.getHeartRateTrend().asMap().entries.map((e) {
+      return FlSpot(e.key.toDouble(), e.value);
+    }).toList();
 
     return Card(
       child: Padding(
@@ -521,14 +453,10 @@ class _HistoryPageState extends State<HistoryPage>
                               },
                             ),
                           ),
-                          topTitles: AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          rightTitles: AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
+                          topTitles: _kHiddenTopTitles,
+                          rightTitles: _kHiddenRightTitles,
                         ),
-                        borderData: FlBorderData(show: false),
+                        borderData: _kNoBorder,
                         minY: 40,
                         maxY: 200,
                         lineBarsData: [
@@ -538,10 +466,11 @@ class _HistoryPageState extends State<HistoryPage>
                             color: colorScheme.primary,
                             barWidth: 3,
                             isStrokeCapRound: true,
-                            dotData: FlDotData(show: false),
+                            dotData: _kNoDots,
                             belowBarData: BarAreaData(
                               show: true,
-                              color: colorScheme.primary.withValues(alpha: 0.1),
+                              color:
+                                  colorScheme.primary.withValues(alpha: 0.1),
                             ),
                           ),
                         ],
@@ -628,11 +557,7 @@ class _HistoryPageState extends State<HistoryPage>
               size: 64,
               color: colorScheme.onSurfaceVariant.withValues(alpha: 0.4),
             ),
-            const SizedBox(height: 16),
-            Text(
-              '暂无历史记录',
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
+            const Text('暂无历史记录'),
           ],
         ),
       );
@@ -644,8 +569,9 @@ class _HistoryPageState extends State<HistoryPage>
       separatorBuilder: (_, __) => const Divider(height: 1),
       itemBuilder: (context, index) {
         final record = records[index];
+        final sportType = record['sportType'] as String;
         IconData typeIcon;
-        switch (record['sportType'] as String) {
+        switch (sportType) {
           case '走路':
             typeIcon = Icons.directions_walk;
             break;
@@ -664,7 +590,8 @@ class _HistoryPageState extends State<HistoryPage>
             child: Icon(typeIcon, color: colorScheme.primary, size: 20),
           ),
           title: Text(
-            DateFormat('yyyy-MM-dd HH:mm').format(record['dateTime'] as DateTime),
+            DateFormat('yyyy-MM-dd HH:mm')
+                .format(record['dateTime'] as DateTime),
             style: Theme.of(context).textTheme.bodyMedium,
           ),
           subtitle: Text(

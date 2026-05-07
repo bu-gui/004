@@ -10,7 +10,7 @@ class DeepSeekApiService {
   factory DeepSeekApiService() => _instance;
   DeepSeekApiService._internal();
 
-  late final Dio _dio;
+  Dio? _dio;
 
   static const String _baseUrl = 'https://api.deepseek.com/v1/chat/completions';
   static const String _model = 'deepseek-chat';
@@ -20,6 +20,8 @@ class DeepSeekApiService {
 
   void setApiKey(String key) {
     _apiKey = key;
+    // API Key 变更后重新创建 Dio 实例
+    _dio = null;
   }
 
   Dio _createDio() {
@@ -35,13 +37,13 @@ class DeepSeekApiService {
         },
       ),
     );
-    dio.interceptors.add(_RetryInterceptor(maxRetries: _maxRetries));
+    dio.interceptors.add(_RetryInterceptor(dio, maxRetries: _maxRetries));
     return dio;
   }
 
   Dio get _client {
-    _dio = _createDio();
-    return _dio;
+    _dio ??= _createDio();
+    return _dio!;
   }
 
   Future<DailyReport> generateReport(DailySummary summary) async {
@@ -52,13 +54,11 @@ class DeepSeekApiService {
         'messages': [
           {
             'role': 'system',
-            'content': '你是一个专业的健康分析助手。根据用户的每日健康数据，生成一份详细的健康报告，'
+            'content':
+                '你是一个专业的健康分析助手。根据用户的每日健康数据，生成一份详细的健康报告，'
                 '包含整体状况分析、各项指标评价、运动建议和健康提醒。以JSON格式返回。',
           },
-          {
-            'role': 'user',
-            'content': _buildReportPrompt(summary),
-          },
+          {'role': 'user', 'content': _buildReportPrompt(summary)},
         ],
         'stream': false,
       },
@@ -75,13 +75,11 @@ class DeepSeekApiService {
         'messages': [
           {
             'role': 'system',
-            'content': '你是一个专业的运动训练教练。根据用户的近期健康数据，制定一份个性化的运动训练计划。'
+            'content':
+                '你是一个专业的运动训练教练。根据用户的近期健康数据，制定一份个性化的运动训练计划。'
                 '包含训练目标、每日训练安排、运动类型建议和注意事项。以JSON格式返回。',
           },
-          {
-            'role': 'user',
-            'content': _buildPlanPrompt(summaries),
-          },
+          {'role': 'user', 'content': _buildPlanPrompt(summaries)},
         ],
         'stream': false,
       },
@@ -98,13 +96,11 @@ class DeepSeekApiService {
         'messages': [
           {
             'role': 'system',
-            'content': '你是一个智能健康助手，可以回答关于健康、运动、饮食等方面的问题。'
+            'content':
+                '你是一个智能健康助手，可以回答关于健康、运动、饮食等方面的问题。'
                 '请用友好、专业的口吻回答用户的问题。',
           },
-          {
-            'role': 'user',
-            'content': message,
-          },
+          {'role': 'user', 'content': message},
         ],
         'stream': true,
       },
@@ -164,18 +160,21 @@ class DeepSeekApiService {
   String _buildPlanPrompt(List<DailySummary> summaries) {
     StringBuffer sb = StringBuffer('请根据以下近期健康数据制定训练计划：\n\n');
     for (var summary in summaries) {
-      sb.writeln('日期：${summary.date}，步数：${summary.totalSteps}，'
-          '卡路里：${summary.totalCalories}，平均心率：${summary.avgHeartRate}，'
-          '运动时长：${summary.motionMinutes}分钟');
+      sb.writeln(
+        '日期：${summary.date}，步数：${summary.totalSteps}，'
+        '卡路里：${summary.totalCalories}，平均心率：${summary.avgHeartRate}，'
+        '运动时长：${summary.motionMinutes}分钟',
+      );
     }
     return sb.toString();
   }
 }
 
 class _RetryInterceptor extends Interceptor {
+  final Dio _dio;
   final int maxRetries;
 
-  _RetryInterceptor({required this.maxRetries});
+  _RetryInterceptor(this._dio, {required this.maxRetries});
 
   @override
   void onError(DioException err, ErrorInterceptorHandler handler) async {
@@ -186,7 +185,8 @@ class _RetryInterceptor extends Interceptor {
         err.requestOptions.extra['retryCount'] = retryCount;
         await Future.delayed(Duration(seconds: retryCount * 2));
         try {
-          final response = await Dio().fetch(err.requestOptions);
+          // 使用传入的 Dio 实例（保留了 BaseOptions 配置）
+          final response = await _dio.fetch(err.requestOptions);
           handler.resolve(response);
           return;
         } catch (e) {

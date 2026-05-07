@@ -18,3 +18,4 @@ esp_err_t mpu6050_read_all(mpu6050_data_t *data);
 esp_err_t mpu6050_calibrate(void);
 esp_err_t mpu6050_get_offsets(int16_t *accel_offset_x, int16_t *accel_offset_y, int16_t *accel_offset_z,
                               int16_t *gyro_offset_x, int16_t *gyro_offset_y, int16_t *gyro_offset_z);
+esp_err_t mpu6050_set_low_power(bool enable);

@@ -2,46 +2,36 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "arrhythmia_screener.h"
 
 #define RR_BUFFER_SIZE 60
-
-typedef enum {
-    NORMAL = 0,
-    SUSPECT_AF,
-    SUSPECT_PVC
-} arrhythmia_type_t;
-
-typedef struct {
-    arrhythmia_type_t type;
-    float sdnn;
-    float rmssd;
-    float pnn50;
-    float avg_rr;
-} arrhythmia_result_t;
 
 static float rr_buffer[RR_BUFFER_SIZE];
 static int rr_count;
 static int rr_head;
 
-void arrhythmia_screener_init(void)
+esp_err_t arrhythmia_screener_init(void)
 {
     memset(rr_buffer, 0, sizeof(rr_buffer));
     rr_count = 0;
     rr_head = 0;
+    return ESP_OK;
 }
 
-void feed_rr_interval(float rr_ms)
+esp_err_t arrhythmia_screener_feed_rr_interval(uint32_t rr_ms)
 {
-    rr_buffer[rr_head] = rr_ms;
+    rr_buffer[rr_head] = (float)rr_ms;
     rr_head = (rr_head + 1) % RR_BUFFER_SIZE;
     if (rr_count < RR_BUFFER_SIZE) rr_count++;
+    return ESP_OK;
 }
 
-float get_sdnn(void)
+uint32_t arrhythmia_screener_get_sdnn(void)
 {
-    if (rr_count < 2) return 0.0f;
+    if (rr_count < 2) return 0;
 
     float sum = 0.0f;
     int n = rr_count < RR_BUFFER_SIZE ? rr_count : RR_BUFFER_SIZE;
@@ -55,16 +45,12 @@ float get_sdnn(void)
         float diff = rr_buffer[i] - mean;
         variance += diff * diff;
     }
-    return sqrtf(variance / n);
+    return (uint32_t)sqrtf(variance / n);
 }
 
 arrhythmia_result_t arrhythmia_screener_analyze(void)
 {
-    arrhythmia_result_t res;
-    memset(&res, 0, sizeof(res));
-    res.type = NORMAL;
-
-    if (rr_count < 2) return res;
+    if (rr_count < 2) return ARRHYTHMIA_INSUFFICIENT_DATA;
 
     int n = rr_count < RR_BUFFER_SIZE ? rr_count : RR_BUFFER_SIZE;
 
@@ -72,14 +58,14 @@ arrhythmia_result_t arrhythmia_screener_analyze(void)
     for (int i = 0; i < n; i++) {
         sum += rr_buffer[i];
     }
-    res.avg_rr = sum / n;
+    float avg_rr = sum / n;
 
     float variance = 0.0f;
     for (int i = 0; i < n; i++) {
-        float diff = rr_buffer[i] - res.avg_rr;
+        float diff = rr_buffer[i] - avg_rr;
         variance += diff * diff;
     }
-    res.sdnn = sqrtf(variance / n);
+    float sdnn = sqrtf(variance / n);
 
     float sum_diff_sq = 0.0f;
     int nn50 = 0;
@@ -88,24 +74,27 @@ arrhythmia_result_t arrhythmia_screener_analyze(void)
         sum_diff_sq += diff * diff;
         if (fabsf(diff) > 50.0f) nn50++;
     }
-    res.rmssd = sqrtf(sum_diff_sq / (n - 1));
-    res.pnn50 = (float)nn50 / (n - 1) * 100.0f;
+    float rmssd = sqrtf(sum_diff_sq / (n - 1));
+    float pnn50 = (float)nn50 / (n - 1) * 100.0f;
 
-    if (res.sdnn > 50.0f && res.pnn50 > 30.0f && res.rmssd > 40.0f) {
-        res.type = SUSPECT_AF;
-        return res;
+    if (sdnn > 50.0f && pnn50 > 30.0f && rmssd > 40.0f) {
+        return ARRHYTHMIA_SUSPECT_AF;
     }
 
     int short_rr_count = 0;
-    float threshold_short = res.avg_rr * 0.6f;
+    float threshold_short = avg_rr * 0.6f;
     for (int i = 0; i < n; i++) {
         if (rr_buffer[i] < threshold_short) short_rr_count++;
     }
-    if (short_rr_count >= 1 && short_rr_count <= 3 && res.sdnn > 30.0f) {
-        res.type = SUSPECT_PVC;
-        return res;
+    if (short_rr_count >= 1 && short_rr_count <= 3 && sdnn > 30.0f) {
+        return ARRHYTHMIA_SUSPECT_PVC;
     }
 
-    res.type = NORMAL;
-    return res;
+    return ARRHYTHMIA_NORMAL;
+}
+
+esp_err_t arrhythmia_screener_reset(void)
+{
+    arrhythmia_screener_init();
+    return ESP_OK;
 }

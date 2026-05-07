@@ -1,17 +1,17 @@
 #include <stdio.h>
 #include <string.h>
+#include "esp_log.h"
 #include "driver/i2c.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "ssd1306.h"
 
 #define SSD1306_ADDR            0x3C
-#define SSD1306_WIDTH           128
-#define SSD1306_HEIGHT          64
 #define SSD1306_PAGES           (SSD1306_HEIGHT / 8)
 
 static uint8_t framebuffer[SSD1306_WIDTH * SSD1306_PAGES];
 
-static void write_cmd(uint8_t cmd)
+static esp_err_t write_cmd(uint8_t cmd)
 {
     i2c_cmd_handle_t h = i2c_cmd_link_create();
     i2c_master_start(h);
@@ -19,11 +19,12 @@ static void write_cmd(uint8_t cmd)
     i2c_master_write_byte(h, 0x00, 1);
     i2c_master_write_byte(h, cmd, 1);
     i2c_master_stop(h);
-    i2c_master_cmd_begin(I2C_NUM_0, h, pdMS_TO_TICKS(100));
+    esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, h, pdMS_TO_TICKS(100));
     i2c_cmd_link_delete(h);
+    return ret;
 }
 
-static void write_data(uint8_t data)
+static esp_err_t write_data(uint8_t data)
 {
     i2c_cmd_handle_t h = i2c_cmd_link_create();
     i2c_master_start(h);
@@ -31,11 +32,12 @@ static void write_data(uint8_t data)
     i2c_master_write_byte(h, 0x40, 1);
     i2c_master_write_byte(h, data, 1);
     i2c_master_stop(h);
-    i2c_master_cmd_begin(I2C_NUM_0, h, pdMS_TO_TICKS(100));
+    esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, h, pdMS_TO_TICKS(100));
     i2c_cmd_link_delete(h);
+    return ret;
 }
 
-void ssd1306_init(void)
+esp_err_t ssd1306_init(void)
 {
     vTaskDelay(pdMS_TO_TICKS(100));
     write_cmd(0xAE);
@@ -63,24 +65,27 @@ void ssd1306_init(void)
     write_cmd(0xA4);
     write_cmd(0xA6);
     write_cmd(0xAF);
+    return ESP_OK;
 }
 
-void ssd1306_clear(void)
+esp_err_t ssd1306_clear(void)
 {
     memset(framebuffer, 0, sizeof(framebuffer));
+    return ESP_OK;
 }
 
-void ssd1306_draw_pixel(int x, int y, int color)
+esp_err_t ssd1306_draw_pixel(uint8_t x, uint8_t y, bool on)
 {
-    if (x < 0 || x >= SSD1306_WIDTH || y < 0 || y >= SSD1306_HEIGHT) return;
-    if (color) {
+    if (x >= SSD1306_WIDTH || y >= SSD1306_HEIGHT) return ESP_ERR_INVALID_ARG;
+    if (on) {
         framebuffer[x + (y / 8) * SSD1306_WIDTH] |= (1 << (y % 8));
     } else {
         framebuffer[x + (y / 8) * SSD1306_WIDTH] &= ~(1 << (y % 8));
     }
+    return ESP_OK;
 }
 
-void ssd1306_display(void)
+esp_err_t ssd1306_display(void)
 {
     for (int page = 0; page < SSD1306_PAGES; page++) {
         write_cmd(0xB0 + page);
@@ -92,9 +97,27 @@ void ssd1306_display(void)
         i2c_master_write_byte(h, 0x40, 1);
         i2c_master_write(h, &framebuffer[page * SSD1306_WIDTH], SSD1306_WIDTH, 1);
         i2c_master_stop(h);
-        i2c_master_cmd_begin(I2C_NUM_0, h, pdMS_TO_TICKS(100));
+        esp_err_t ret = i2c_master_cmd_begin(I2C_NUM_0, h, pdMS_TO_TICKS(100));
         i2c_cmd_link_delete(h);
+        if (ret != ESP_OK) return ret;
     }
+    return ESP_OK;
+}
+
+esp_err_t ssd1306_set_power(bool on)
+{
+    return write_cmd(on ? 0xAF : 0xAE);
+}
+
+esp_err_t ssd1306_draw_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, bool fill)
+{
+    for (uint8_t i = 0; i < w; i++) {
+        for (uint8_t j = 0; j < h; j++) {
+            esp_err_t ret = ssd1306_draw_pixel(x + i, y + j, fill);
+            if (ret != ESP_OK) return ret;
+        }
+    }
+    return ESP_OK;
 }
 
 static const uint8_t font_6x8[95][6] = {
@@ -195,25 +218,28 @@ static const uint8_t font_6x8[95][6] = {
     {0x08,0x04,0x08,0x10,0x08,0x00},
 };
 
-void ssd1306_draw_char(int x, int y, char c)
+esp_err_t ssd1306_draw_char(uint8_t x, uint8_t y, char c)
 {
     if (c < 32 || c > 126) c = 32;
     int idx = c - 32;
     for (int i = 0; i < 6; i++) {
         for (int j = 0; j < 8; j++) {
             if (font_6x8[idx][i] & (1 << j)) {
-                ssd1306_draw_pixel(x + i, y + j, 1);
+                esp_err_t ret = ssd1306_draw_pixel(x + i, y + j, true);
+                if (ret != ESP_OK) return ret;
             } else {
-                ssd1306_draw_pixel(x + i, y + j, 0);
+                ssd1306_draw_pixel(x + i, y + j, false);
             }
         }
     }
+    return ESP_OK;
 }
 
-void ssd1306_draw_string(int x, int y, const char *str)
+esp_err_t ssd1306_draw_string(uint8_t x, uint8_t y, const char *str)
 {
     while (*str) {
-        ssd1306_draw_char(x, y, *str);
+        esp_err_t ret = ssd1306_draw_char(x, y, *str);
+        if (ret != ESP_OK) return ret;
         x += 6;
         if (x + 6 > SSD1306_WIDTH) {
             x = 0;
@@ -221,4 +247,5 @@ void ssd1306_draw_string(int x, int y, const char *str)
         }
         str++;
     }
+    return ESP_OK;
 }

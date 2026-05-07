@@ -156,19 +156,19 @@ class BlePacket {
       calories: data.getFloat32(9, Endian.little),
       motionType: data.getUint8(13),
       fallDetected: data.getUint8(14),
-      battery: data.getUint8(15).toDouble(),
+      battery: data.getFloat32(15, Endian.little),
     );
   }
 
   List<int> toBytes() {
-    final data = ByteData(16);
+    final data = ByteData(19);
     data.setFloat32(0, heartRate, Endian.little);
     data.setUint8(4, spo2);
     data.setUint32(5, steps, Endian.little);
     data.setFloat32(9, calories, Endian.little);
     data.setUint8(13, motionType);
     data.setUint8(14, fallDetected);
-    data.setUint8(15, battery.round());
+    data.setFloat32(15, battery, Endian.little);
     return data.buffer.asUint8List().toList();
   }
 

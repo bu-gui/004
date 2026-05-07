@@ -14,6 +14,10 @@ class BleProvider extends ChangeNotifier {
   BleDevice? _connectedBleDevice;
   String? _error;
 
+  // 固件特征值 UUID
+  static const String _characteristicUuid =
+      '11234567-89ab-cdef-fedc-ba9876543210';
+
   final StreamController<BlePacket> _packetController =
       StreamController<BlePacket>.broadcast();
 
@@ -37,56 +41,39 @@ class BleProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // 取消旧的订阅，确保只有一个订阅
+      await _scanSubscription?.cancel();
+      _scanSubscription = null;
+
       await FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
 
-      _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-        _deviceList = results
-            .where(
-              (r) =>
-                  r.device.remoteId != null && r.device.platformName.isNotEmpty,
-            )
-            .toList();
-        _devices = _deviceList
-            .map(
-              (r) => BleDevice(
-                name: r.device.platformName,
-                macAddress: r.device.remoteId.toString(),
-                rssi: r.rssi,
-                isConnected: _btDevice?.remoteId == r.device.remoteId,
-              ),
-            )
-            .toList();
-        notifyListeners();
-      });
-
-      FlutterBluePlus.scanResults
-          .listen((results) {
-            if (results.isNotEmpty) {
-              _deviceList = results
-                  .where(
-                    (r) =>
-                        r.device.remoteId != null &&
-                        r.device.platformName.isNotEmpty,
-                  )
-                  .toList();
-              _devices = _deviceList
-                  .map(
-                    (r) => BleDevice(
-                      name: r.device.platformName,
-                      macAddress: r.device.remoteId.toString(),
-                      rssi: r.rssi,
-                      isConnected: _btDevice?.remoteId == r.device.remoteId,
-                    ),
-                  )
-                  .toList();
-              notifyListeners();
-            }
-          })
-          .onError((e) {
-            _error = '扫描出错: $e';
-            _isScanning = false;
-            notifyListeners();
-          });
+      _scanSubscription = FlutterBluePlus.scanResults.listen(
+        (results) {
+          _deviceList = results
+              .where(
+                (r) =>
+                    r.device.remoteId != null &&
+                    r.device.platformName.isNotEmpty,
+              )
+              .toList();
+          _devices = _deviceList
+              .map(
+                (r) => BleDevice(
+                  name: r.device.platformName,
+                  macAddress: r.device.remoteId.toString(),
+                  rssi: r.rssi,
+                  isConnected: _btDevice?.remoteId == r.device.remoteId,
+                ),
+              )
+              .toList();
+          notifyListeners();
+        },
+        onError: (e) {
+          _error = '扫描出错: $e';
+          _isScanning = false;
+          notifyListeners();
+        },
+      );
     } catch (e) {
       _error = '启动扫描失败: $e';
       _isScanning = false;
@@ -172,14 +159,19 @@ class BleProvider extends ChangeNotifier {
       List<BluetoothService> services = await device.discoverServices();
       for (var service in services) {
         for (var characteristic in service.characteristics) {
-          if (characteristic.properties.notify) {
+          // 按固件特征值 UUID 精确匹配
+          if (characteristic.uuid.toString().toLowerCase() ==
+              _characteristicUuid) {
             await characteristic.setNotifyValue(true);
             _dataSubscription = characteristic.onValueReceived.listen((data) {
               _handleData(data);
             });
+            return;
           }
         }
       }
+      _error = '未找到固件特征值 (UUID: $_characteristicUuid)';
+      notifyListeners();
     } catch (e) {
       _error = '订阅数据失败: $e';
       notifyListeners();
@@ -187,17 +179,9 @@ class BleProvider extends ChangeNotifier {
   }
 
   void _handleData(List<int> data) {
-    if (data.length < 5) return;
+    if (data.length < 19) return;
     try {
-      final packet = BlePacket(
-        heartRate: data[0].toDouble(),
-        spo2: data[1],
-        steps: (data[2] << 8) | data[3],
-        calories: (data[2] << 8 | data[3]).toDouble(),
-        motionType: data.length > 4 ? data[4] : 0,
-        battery: data.length > 5 ? data[5].toDouble() : 0.0,
-        fallDetected: data.length > 6 ? data[6] : 0,
-      );
+      final packet = BlePacket.fromBytes(data);
       _packetController.add(packet);
       notifyListeners();
     } catch (_) {}

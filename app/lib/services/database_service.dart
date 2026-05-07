@@ -319,4 +319,23 @@ class DatabaseService {
     if (maps.isEmpty) return null;
     return DailyGoal.fromMap(maps.first);
   }
+
+  Future<void> saveApiKey(String apiKey) async {
+    final db = await database;
+    await db.insert('chat_cache', {
+      'key': 'deepseek_api_key',
+      'value': apiKey,
+    }, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<String?> getApiKey() async {
+    final db = await database;
+    List<Map<String, dynamic>> maps = await db.query(
+      'chat_cache',
+      where: 'key = ?',
+      whereArgs: ['deepseek_api_key'],
+    );
+    if (maps.isEmpty) return null;
+    return maps.first['value'] as String?;
+  }
 }

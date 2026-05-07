@@ -99,6 +99,22 @@ class _ReportPageState extends State<ReportPage> {
     );
   }
 
+  /// 从 report.summaryItems 中查找第一个 label 包含 [key] 的项，返回其 value
+  /// 若未找到则返回 [fallback]
+  String _getItemValue(String key, {String fallback = '--'}) {
+    final provider = context.read<DeepSeekProvider>();
+    final report = provider.report;
+    if (report == null) return fallback;
+    try {
+      final item = report.summaryItems.firstWhere(
+        (item) => item.label.contains(key),
+      );
+      return item.value;
+    } catch (_) {
+      return fallback;
+    }
+  }
+
   Widget _buildReportContent(
     BuildContext context,
     DeepSeekProvider provider,
@@ -129,13 +145,13 @@ class _ReportPageState extends State<ReportPage> {
             children: [
               _buildReportItem(
                 label: '步数',
-                value: '-- 步',
+                value: '${_getItemValue('步数', fallback: '--')}',
                 icon: Icons.directions_walk,
                 colorScheme: colorScheme,
               ),
               _buildReportItem(
                 label: '卡路里',
-                value: '-- kcal',
+                value: '${_getItemValue('卡路里', fallback: '--')}',
                 icon: Icons.local_fire_department,
                 colorScheme: colorScheme,
               ),
@@ -150,19 +166,19 @@ class _ReportPageState extends State<ReportPage> {
             children: [
               _buildReportItem(
                 label: '静息心率',
-                value: '-- bpm',
+                value: '${_getItemValue('静息', fallback: '-- bpm')}',
                 icon: Icons.favorite_border,
                 colorScheme: colorScheme,
               ),
               _buildReportItem(
                 label: '平均心率',
-                value: '-- bpm',
+                value: '${_getItemValue('平均', fallback: '-- bpm')}',
                 icon: Icons.favorite,
                 colorScheme: colorScheme,
               ),
               _buildReportItem(
                 label: '最高心率',
-                value: '-- bpm',
+                value: '${_getItemValue('最高', fallback: '-- bpm')}',
                 icon: Icons.favorite,
                 colorScheme: colorScheme,
               ),
@@ -177,13 +193,13 @@ class _ReportPageState extends State<ReportPage> {
             children: [
               _buildReportItem(
                 label: '睡眠时长',
-                value: '-- 小时',
+                value: '${_getItemValue('睡眠时长', fallback: '-- 小时')}',
                 icon: Icons.schedule,
                 colorScheme: colorScheme,
               ),
               _buildReportItem(
                 label: '睡眠质量',
-                value: '--',
+                value: '${_getItemValue('睡眠质量', fallback: '--')}',
                 icon: Icons.star_half,
                 colorScheme: colorScheme,
               ),

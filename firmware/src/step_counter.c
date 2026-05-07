@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "step_counter.h"
 
 #define WINDOW_SIZE 20
 #define THRESHOLD 2.5f
@@ -15,27 +17,22 @@ typedef struct {
     int count;
 } accel_ring_t;
 
-typedef struct {
-    uint32_t total_steps;
-    float cadence;
-    float distance_meters;
-} step_result_t;
-
 static accel_ring_t accel_ring;
 static int prev_above_threshold;
 static int last_step_time;
 static int sample_index;
 static int above_count;
-static step_result_t result;
+static step_counter_t result;
 
-void step_counter_init(void)
+esp_err_t step_counter_init(void)
 {
     memset(&accel_ring, 0, sizeof(accel_ring_t));
-    memset(&result, 0, sizeof(step_result_t));
+    memset(&result, 0, sizeof(step_counter_t));
     prev_above_threshold = 0;
     last_step_time = 0;
     sample_index = 0;
     above_count = 0;
+    return ESP_OK;
 }
 
 static void push_magnitude(float val)
@@ -57,7 +54,7 @@ static float get_magnitude_avg(void)
     return sum / n;
 }
 
-void step_counter_feed_accel(float ax, float ay, float az)
+esp_err_t step_counter_feed_accel(float ax, float ay, float az)
 {
     float magnitude = sqrtf(ax * ax + ay * ay + az * az);
     push_magnitude(magnitude);
@@ -74,18 +71,29 @@ void step_counter_feed_accel(float ax, float ay, float az)
         if (elapsed_ms >= MIN_INTERVAL_MS) {
             result.total_steps++;
             if (elapsed_ms > 0) {
-                result.cadence = 60000.0f / elapsed_ms;
+                result.cadence = (uint32_t)(60000.0f / elapsed_ms);
             }
-            result.distance_meters = result.total_steps * 0.7f;
+            result.distance_km = result.total_steps * 0.7f / 1000.0f;
             last_step_time = now;
         }
     }
 
     prev_above_threshold = above;
     sample_index++;
+    return ESP_OK;
 }
 
-step_result_t step_counter_get_result(void)
+esp_err_t step_counter_get_result(step_counter_t *result_out)
 {
-    return result;
+    if (!result_out) return ESP_ERR_INVALID_ARG;
+    result_out->total_steps = result.total_steps;
+    result_out->cadence = result.cadence;
+    result_out->distance_km = result.distance_km;
+    return ESP_OK;
+}
+
+esp_err_t step_counter_reset(void)
+{
+    step_counter_init();
+    return ESP_OK;
 }

@@ -19,6 +19,7 @@ static int buffer_count;
 static int window_ready;
 static int confirm_counter;
 static fall_state_t fall_state;
+static TickType_t last_fall_tick;
 
 static const float w1[FEATURE_DIM * HIDDEN1] = {
     0.42f, -0.13f, 0.27f, -0.35f, 0.18f, 0.09f,
@@ -36,11 +37,7 @@ static const float w1[FEATURE_DIM * HIDDEN1] = {
     -0.32f, 0.18f, -0.27f, 0.11f, -0.38f, 0.23f,
     0.26f, -0.14f, 0.31f, -0.09f, 0.37f, -0.22f,
     -0.18f, 0.34f, -0.11f, 0.28f, -0.33f, 0.16f,
-    0.14f, -0.26f, 0.38f, -0.17f, 0.21f, -0.35f,
-    0.09f, -0.29f, 0.24f, -0.13f, 0.32f, -0.27f,
-    0.06f, 0.17f, -0.39f, 0.22f, -0.14f, 0.31f,
-    -0.28f, 0.11f, -0.35f, 0.18f, -0.26f, 0.33f,
-    0.19f, -0.12f, 0.29f, -0.37f, 0.15f, -0.23f
+    0.14f, -0.26f, 0.38f, -0.17f, 0.21f, -0.35f
 };
 
 static const float b1[HIDDEN1] = {
@@ -64,23 +61,7 @@ static const float w2[HIDDEN1 * HIDDEN2] = {
     0.27f, -0.16f, 0.23f, -0.31f, 0.14f, -0.25f, 0.33f, -0.18f,
     -0.22f, 0.34f, -0.12f, 0.28f, -0.19f, 0.15f, -0.27f, 0.21f,
     0.19f, -0.33f, 0.14f, -0.26f, 0.31f, -0.17f, 0.24f, -0.22f,
-    -0.15f, 0.28f, -0.32f, 0.13f, -0.24f, 0.33f, -0.18f, 0.26f,
-    0.11f, -0.29f, 0.32f, -0.14f, 0.23f, -0.27f, 0.18f, -0.21f,
-    -0.34f, 0.15f, -0.25f, 0.19f, -0.31f, 0.28f, -0.16f, 0.22f,
-    0.24f, -0.13f, 0.29f, -0.32f, 0.17f, -0.22f, 0.31f, -0.15f,
-    -0.27f, 0.33f, -0.18f, 0.14f, -0.26f, 0.21f, -0.34f, 0.12f,
-    0.28f, -0.19f, 0.16f, -0.33f, 0.24f, -0.11f, 0.29f, -0.23f,
-    -0.16f, 0.31f, -0.27f, 0.18f, -0.14f, 0.34f, -0.22f, 0.25f,
-    0.14f, -0.32f, 0.21f, -0.28f, 0.16f, -0.24f, 0.33f, -0.17f,
-    -0.29f, 0.23f, -0.15f, 0.31f, -0.19f, 0.12f, -0.26f, 0.34f,
-    0.21f, -0.17f, 0.34f, -0.23f, 0.28f, -0.14f, 0.19f, -0.31f,
-    -0.25f, 0.11f, -0.29f, 0.32f, -0.16f, 0.27f, -0.13f, 0.24f,
-    0.32f, -0.21f, 0.17f, -0.34f, 0.13f, -0.28f, 0.25f, -0.16f,
-    -0.18f, 0.14f, -0.31f, 0.23f, -0.27f, 0.33f, -0.11f, 0.29f,
-    0.15f, -0.33f, 0.28f, -0.19f, 0.31f, -0.24f, 0.17f, -0.22f,
-    -0.32f, 0.26f, -0.14f, 0.29f, -0.21f, 0.13f, -0.34f, 0.18f,
-    0.26f, -0.15f, 0.22f, -0.31f, 0.19f, -0.33f, 0.14f, -0.28f,
-    -0.17f, 0.34f, -0.23f, 0.11f, -0.29f, 0.32f, -0.18f, 0.25f
+    -0.15f, 0.28f, -0.32f, 0.13f, -0.24f, 0.33f, -0.18f, 0.26f
 };
 
 static const float b2[HIDDEN2] = {
@@ -110,6 +91,7 @@ esp_err_t fall_detector_init(void)
     window_ready = 0;
     confirm_counter = 0;
     fall_state = FALL_NONE;
+    last_fall_tick = 0;
     memset(features, 0, sizeof(features));
     return ESP_OK;
 }
@@ -233,6 +215,14 @@ int fall_detector_process(void)
 {
     if (!window_ready) return FALL_NONE;
 
+    if (last_fall_tick != 0) {
+        TickType_t now = xTaskGetTickCount();
+        if ((now - last_fall_tick) < pdMS_TO_TICKS(30000)) {
+            return FALL_NONE;
+        }
+        last_fall_tick = 0;
+    }
+
     extract_features();
     float prob = mlp_inference();
 
@@ -240,6 +230,7 @@ int fall_detector_process(void)
         confirm_counter++;
         if (confirm_counter >= CONFIRM_THRESH) {
             fall_state = FALL_CONFIRMED;
+            last_fall_tick = xTaskGetTickCount();
             return FALL_CONFIRMED;
         }
     } else {

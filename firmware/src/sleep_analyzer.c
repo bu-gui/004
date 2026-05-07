@@ -2,24 +2,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "sleep_analyzer.h"
 
 #define BODY_MOVEMENT_WINDOW 600
-
-typedef enum {
-    AWAKE = 0,
-    LIGHT_SLEEP,
-    DEEP_SLEEP
-} sleep_stage_t;
-
-typedef struct {
-    sleep_stage_t stage;
-    int total_minutes;
-    int deep_sleep_minutes;
-    int light_sleep_minutes;
-    float quality_score;
-} sleep_result_t;
 
 typedef struct {
     float ax, ay, az;
@@ -33,7 +21,7 @@ static float prev_ax, prev_ay, prev_az;
 static int sleep_started;
 static sleep_result_t result;
 
-void sleep_analyzer_init(void)
+esp_err_t sleep_analyzer_init(void)
 {
     memset(movement_buffer, 0, sizeof(movement_buffer));
     movement_head = 0;
@@ -41,30 +29,39 @@ void sleep_analyzer_init(void)
     prev_ax = prev_ay = prev_az = 0.0f;
     sleep_started = 0;
     memset(&result, 0, sizeof(sleep_result_t));
-    result.stage = AWAKE;
+    result.sleep_hours = 0.0f;
+    result.quality = 0;
+    result.deep_pct = 0;
+    return ESP_OK;
 }
 
-void feed_data(float ax, float ay, float az, float hr)
+esp_err_t sleep_analyzer_feed_data(float heart_rate, uint8_t spo2, float ax, float ay, float az)
 {
+    (void)spo2;
     int idx = movement_head % BODY_MOVEMENT_WINDOW;
     movement_buffer[idx].ax = ax;
     movement_buffer[idx].ay = ay;
     movement_buffer[idx].az = az;
-    movement_buffer[idx].hr = hr;
+    movement_buffer[idx].hr = heart_rate;
     movement_head++;
     if (movement_count < BODY_MOVEMENT_WINDOW) movement_count++;
 
     prev_ax = ax;
     prev_ay = ay;
     prev_az = az;
+    return ESP_OK;
 }
 
 sleep_result_t sleep_analyzer_analyze(void)
 {
+    sleep_result_t res;
+    memset(&res, 0, sizeof(res));
+
     if (movement_count < 60) {
-        result.stage = AWAKE;
-        result.quality_score = 0.0f;
-        return result;
+        res.sleep_hours = 0.0f;
+        res.quality = 0;
+        res.deep_pct = 0;
+        return res;
     }
 
     int n = movement_count < BODY_MOVEMENT_WINDOW ? movement_count : BODY_MOVEMENT_WINDOW;
@@ -72,9 +69,10 @@ sleep_result_t sleep_analyzer_analyze(void)
 
     float movement_sum = 0.0f;
     float hr_sum = 0.0f;
-    float hr_var_sum = 0.0f;
+    float hr_diff_sq_sum = 0.0f;
     float prev_hr = 0.0f;
     int hr_samples = 0;
+    int total_deep_samples = 0;
 
     for (int i = 0; i < n; i++) {
         int idx = (start + i + BODY_MOVEMENT_WINDOW) % BODY_MOVEMENT_WINDOW;
@@ -88,7 +86,8 @@ sleep_result_t sleep_analyzer_analyze(void)
         if (movement_buffer[idx].hr > 0) {
             hr_sum += movement_buffer[idx].hr;
             if (hr_samples > 0) {
-                hr_var_sum += (movement_buffer[idx].hr - prev_hr) * (movement_buffer[idx].hr - prev_hr);
+                float diff = movement_buffer[idx].hr - prev_hr;
+                hr_diff_sq_sum += diff * diff;
             }
             prev_hr = movement_buffer[idx].hr;
             hr_samples++;
@@ -97,53 +96,55 @@ sleep_result_t sleep_analyzer_analyze(void)
 
     float avg_movement = movement_sum / n;
     float avg_hr = hr_samples > 0 ? hr_sum / hr_samples : 0.0f;
-    float hrv = hr_samples > 1 ? sqrtf(hr_var_sum / hr_samples) : 0.0f;
+    float hrv_rmssd = hr_samples > 1 ? sqrtf(hr_diff_sq_sum / (hr_samples - 1)) : 0.0f;
 
     if (!sleep_started) {
         if (avg_movement < 0.3f && avg_hr > 0 && avg_hr < 65.0f) {
             sleep_started = 1;
-            result.stage = LIGHT_SLEEP;
-            result.total_minutes = 0;
+            result.sleep_hours = 0.0f;
+            result.quality = 0;
+            result.deep_pct = 0;
         }
     }
 
     if (sleep_started) {
-        result.total_minutes++;
+        result.sleep_hours += 1.0f / 60.0f;
 
-        if (avg_movement < 0.15f && hrv > 30.0f) {
-            result.stage = DEEP_SLEEP;
-            result.deep_sleep_minutes++;
-        } else if (avg_movement < 0.5f) {
-            result.stage = LIGHT_SLEEP;
-            result.light_sleep_minutes++;
-        } else {
-            result.stage = AWAKE;
-            if (result.total_minutes > 5) {
-                sleep_started = 0;
-                result.total_minutes = 0;
-                result.deep_sleep_minutes = 0;
-                result.light_sleep_minutes = 0;
-            }
+        if (avg_movement < 0.15f && hrv_rmssd > 30.0f) {
+            total_deep_samples++;
+        }
+
+        if (avg_movement >= 0.5f && result.sleep_hours > 0.1f) {
+            sleep_started = 0;
         }
     }
 
-    if (result.total_minutes > 0) {
-        float duration_score = (result.total_minutes < 480)
-            ? (float)result.total_minutes / 480.0f * 40.0f
+    if (result.sleep_hours > 0) {
+        float deep_ratio = n > 0 ? (float)total_deep_samples / n : 0.0f;
+        result.deep_pct = (uint8_t)(deep_ratio * 100.0f);
+
+        float duration_score = (result.sleep_hours < 8.0f)
+            ? result.sleep_hours / 8.0f * 40.0f
             : 40.0f;
 
-        float deep_ratio = result.total_minutes > 0
-            ? (float)result.deep_sleep_minutes / result.total_minutes
-            : 0.0f;
         float deep_score = deep_ratio * 30.0f;
 
         float movement_score = (1.0f - (avg_movement < 1.0f ? avg_movement : 1.0f)) * 20.0f;
 
-        float hrv_score = (hrv < 50.0f ? hrv / 50.0f : 1.0f) * 10.0f;
+        float hrv_score = (hrv_rmssd < 50.0f ? hrv_rmssd / 50.0f : 1.0f) * 10.0f;
 
-        result.quality_score = duration_score + deep_score + movement_score + hrv_score;
-        if (result.quality_score > 100.0f) result.quality_score = 100.0f;
+        float quality_score = duration_score + deep_score + movement_score + hrv_score;
+        if (quality_score > 100.0f) quality_score = 100.0f;
+        result.quality = (uint8_t)quality_score;
     }
 
-    return result;
+    memcpy(&res, &result, sizeof(sleep_result_t));
+    return res;
+}
+
+esp_err_t sleep_analyzer_get_result(sleep_result_t *result_out)
+{
+    if (!result_out) return ESP_ERR_INVALID_ARG;
+    memcpy(result_out, &result, sizeof(sleep_result_t));
+    return ESP_OK;
 }

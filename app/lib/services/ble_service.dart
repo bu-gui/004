@@ -15,9 +15,11 @@ class BleService {
   StreamController<BlePacket>? _dataStreamController;
 
   static const String _targetDeviceName = 'SmartBand';
-  static const String _serviceUuid = '0000ffe0-0000-1000-8000-00805f9b34fb';
-  static const String _txUuid = '0000ffe1-0000-1000-8000-00805f9b34fb';
-  static const String _rxUuid = '0000ffe2-0000-1000-8000-00805f9b34fb';
+  // 固件 128-bit UUID: 服务 01234567-89AB-CDEF-FEDC-BA9876543210
+  // 特征值 11234567-89AB-CDEF-FEDC-BA9876543210 (单一特征，支持 Notify)
+  static const String _serviceUuid = '01234567-89ab-cdef-fedc-ba9876543210';
+  static const String _txUuid = '11234567-89ab-cdef-fedc-ba9876543210';
+  static const String _rxUuid = '11234567-89ab-cdef-fedc-ba9876543210';
 
   bool get isConnected => _connectedDevice != null;
 
@@ -78,7 +80,7 @@ class BleService {
     _notificationSubscription = _rxCharacteristic!.onValueReceived.listen((
       data,
     ) {
-      if (data.length >= 16) {
+      if (data.length >= 19) {
         BlePacket packet = _parseBytes(data);
         _dataStreamController!.add(packet);
       }
@@ -87,41 +89,33 @@ class BleService {
     return _dataStreamController!.stream;
   }
 
+  /// 将 BlePacket 编码为 19 字节的二进制数据，与固件 ble_data_packet_t 一致
+  /// 偏移: 0-3 heartRate(float32 LE), 4 spo2(uint8), 5-8 steps(uint32 LE),
+  ///       9-12 calories(float32 LE), 13 motionType(uint8),
+  ///       14 fallDetected(uint8), 15-18 battery(float32 LE)
   List<int> _packetToBytes(BlePacket packet) {
-    List<int> bytes = [];
-    ByteData heartRateData = ByteData(4);
-    heartRateData.setFloat32(0, packet.heartRate, Endian.little);
-    bytes.addAll(heartRateData.buffer.asUint8List());
-    bytes.add(packet.spo2);
-    ByteData stepsData = ByteData(4);
-    stepsData.setUint32(0, packet.steps, Endian.little);
-    bytes.addAll(stepsData.buffer.asUint8List());
-    ByteData caloriesData = ByteData(4);
-    caloriesData.setFloat32(0, packet.calories, Endian.little);
-    bytes.addAll(caloriesData.buffer.asUint8List());
-    bytes.add(packet.motionType);
-    bytes.add(packet.fallDetected);
-    bytes.add(packet.battery.toInt());
-    return bytes;
+    final data = ByteData(19);
+    data.setFloat32(0, packet.heartRate, Endian.little);
+    data.setUint8(4, packet.spo2);
+    data.setUint32(5, packet.steps, Endian.little);
+    data.setFloat32(9, packet.calories, Endian.little);
+    data.setUint8(13, packet.motionType);
+    data.setUint8(14, packet.fallDetected);
+    data.setFloat32(15, packet.battery, Endian.little);
+    return data.buffer.asUint8List();
   }
 
+  /// 从 19 字节的二进制数据解析为 BlePacket
   BlePacket _parseBytes(List<int> data) {
-    ByteData byteData = ByteData.sublistView(Uint8List.fromList(data));
-    double heartRate = byteData.getFloat32(0, Endian.little);
-    int spo2 = byteData.getUint8(4);
-    int steps = byteData.getUint32(5, Endian.little);
-    double calories = byteData.getFloat32(9, Endian.little);
-    int motionType = byteData.getUint8(13);
-    int fallDetected = byteData.getUint8(14);
-    int battery = byteData.getUint8(15);
+    final byteData = ByteData.view(Uint8List.fromList(data).buffer);
     return BlePacket(
-      heartRate: heartRate,
-      spo2: spo2,
-      steps: steps,
-      calories: calories,
-      motionType: motionType,
-      fallDetected: fallDetected,
-      battery: battery.toDouble(),
+      heartRate: byteData.getFloat32(0, Endian.little),
+      spo2: byteData.getUint8(4),
+      steps: byteData.getUint32(5, Endian.little),
+      calories: byteData.getFloat32(9, Endian.little),
+      motionType: byteData.getUint8(13),
+      fallDetected: byteData.getUint8(14),
+      battery: byteData.getFloat32(15, Endian.little),
     );
   }
 }

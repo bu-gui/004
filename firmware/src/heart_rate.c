@@ -2,8 +2,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "heart_rate.h"
 
 #define SAMPLE_RATE 100
 #define BUFFER_SIZE 500
@@ -23,11 +25,6 @@ typedef struct {
     int count;
 } ring_buffer_t;
 
-typedef struct {
-    float bpm;
-    float confidence;
-} heart_rate_result_t;
-
 static ring_buffer_t hr_buffer;
 static float dc_prev;
 static float bp_x1, bp_x2, bp_y1, bp_y2;
@@ -37,7 +34,7 @@ static float rr_intervals[10];
 static int rr_count;
 static int sample_index;
 
-void heart_rate_init(void)
+esp_err_t heart_rate_init(void)
 {
     memset(&hr_buffer, 0, sizeof(ring_buffer_t));
     dc_prev = 0.0f;
@@ -47,6 +44,7 @@ void heart_rate_init(void)
     rr_count = 0;
     sample_index = 0;
     memset(rr_intervals, 0, sizeof(rr_intervals));
+    return ESP_OK;
 }
 
 static float update_dc_filter(float raw)
@@ -79,9 +77,10 @@ static float ring_get(ring_buffer_t *rb, int offset)
     return rb->buffer[idx];
 }
 
-void heart_rate_feed_sample(uint32_t ir_value)
+esp_err_t heart_rate_feed_sample(uint32_t ir_raw, uint32_t red_raw)
 {
-    float raw = (float)ir_value;
+    (void)red_raw;
+    float raw = (float)ir_raw;
     float ac = update_dc_filter(raw);
     float filtered = update_bandpass(ac);
 
@@ -115,24 +114,29 @@ void heart_rate_feed_sample(uint32_t ir_value)
         }
         last_peak_value = 0.0f;
     }
+    return ESP_OK;
 }
 
-heart_rate_result_t heart_rate_get_result(void)
+esp_err_t heart_rate_get_result(heart_rate_result_t *result)
 {
-    heart_rate_result_t res = {0, 0.0f};
-    if (rr_count < 2) return res;
+    if (!result) return ESP_ERR_INVALID_ARG;
+    result->bpm = 0.0f;
+    result->data_ready = false;
+    result->confidence = 0;
+
+    if (rr_count < 2) return ESP_OK;
 
     float sum = 0.0f;
     for (int i = 0; i < rr_count; i++) {
         sum += rr_intervals[i];
     }
     float avg_interval = sum / rr_count;
-    if (avg_interval < 1.0f) return res;
+    if (avg_interval < 1.0f) return ESP_OK;
 
     float bpm = 60000.0f / avg_interval;
     if (bpm < MIN_BPM) bpm = MIN_BPM;
     if (bpm > MAX_BPM) bpm = MAX_BPM;
-    res.bpm = bpm;
+    result->bpm = bpm;
 
     float variance = 0.0f;
     for (int i = 0; i < rr_count; i++) {
@@ -141,8 +145,16 @@ heart_rate_result_t heart_rate_get_result(void)
     }
     variance /= rr_count;
     float cv = sqrtf(variance) / avg_interval;
-    res.confidence = 1.0f - (cv < 0.5f ? cv : 0.5f) * 2.0f;
-    if (res.confidence < 0.0f) res.confidence = 0.0f;
+    float conf = 1.0f - (cv < 0.5f ? cv : 0.5f) * 2.0f;
+    if (conf < 0.0f) conf = 0.0f;
+    result->confidence = (uint8_t)(conf * 100.0f);
+    result->data_ready = true;
 
-    return res;
+    return ESP_OK;
+}
+
+esp_err_t heart_rate_reset(void)
+{
+    heart_rate_init();
+    return ESP_OK;
 }
