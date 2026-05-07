@@ -92,6 +92,7 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
             break;
 
         case BLE_GAP_EVENT_ADV_COMPLETE:
+            ESP_LOGD(TAG, "Adv complete, restarting");
             ble_start_advertising();
             break;
 
@@ -99,6 +100,19 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
             break;
     }
     return 0;
+}
+
+/* NimBLE host sync callback: controller is ready, safe to start advertising */
+static void ble_on_sync(void)
+{
+    ESP_LOGI(TAG, "NimBLE host synced with controller");
+    ble_start_advertising();
+}
+
+/* Reset callback for when host resets */
+static void ble_on_reset(int reason)
+{
+    ESP_LOGW(TAG, "NimBLE host reset reason=%d", reason);
 }
 
 esp_err_t ble_start_advertising(void)
@@ -214,14 +228,12 @@ esp_err_t ble_init(void)
         return ESP_FAIL;
     }
 
+    /* Set sync callback: advertising will start AFTER host syncs with controller */
+    ble_hs_cfg.sync_cb = ble_on_sync;
+    ble_hs_cfg.reset_cb = ble_on_reset;
     ble_hs_cfg.gatts_register_cb = ble_gatt_svc_register_cb;
 
-    rc = ble_start_advertising();
-    if (rc != 0) {
-        ESP_LOGW(TAG, "Initial advertising failed rc=%d (will retry on disconnect)", rc);
-        /* Non-fatal: will retry on disconnect event */
-    }
-
+    /* Start NimBLE host task (this will trigger ble_on_sync when ready) */
     xTaskCreate((TaskFunction_t)nimble_port_run, "nimble", 4096, NULL, 5, NULL);
 
     return ESP_OK;

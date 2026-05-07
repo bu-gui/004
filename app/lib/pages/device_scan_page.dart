@@ -164,6 +164,52 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
   Widget _buildEmptyState(BuildContext context, BleProvider provider) {
     final colorScheme = Theme.of(context).colorScheme;
 
+    // 如果有错误信息，优先显示错误
+    if (provider.error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 64, color: colorScheme.error),
+              const SizedBox(height: 16),
+              Text(
+                provider.error!,
+                textAlign: TextAlign.center,
+                style: Theme.of(
+                  context,
+                ).textTheme.bodyLarge?.copyWith(color: colorScheme.error),
+              ),
+              const SizedBox(height: 8),
+              if (provider.error!.contains('蓝牙权限'))
+                Text(
+                  '请前往 设置 > 应用 > 智能手环 > 权限，开启蓝牙和位置权限',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              if (!provider.error!.contains('蓝牙权限'))
+                Text(
+                  '确保手机蓝牙已开启，且设备已开机并处于广播状态',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                icon: const Icon(Icons.refresh),
+                label: const Text('重新扫描'),
+                onPressed: () => provider.startScan(),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,

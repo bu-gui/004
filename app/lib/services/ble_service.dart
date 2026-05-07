@@ -25,14 +25,7 @@ class BleService {
 
   Stream<ScanResult> scan() {
     FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
-    return FlutterBluePlus.scanResults
-        .where(
-          (results) => results.any(
-            (result) => result.device.platformName == _targetDeviceName,
-          ),
-        )
-        .expand((results) => results)
-        .where((result) => result.device.platformName == _targetDeviceName);
+    return FlutterBluePlus.scanResults.expand((results) => results);
   }
 
   Future<void> connect(BluetoothDevice device) async {

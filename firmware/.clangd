@@ -6,3 +6,10 @@ CompileFlags:
     - -fno-tree-switch-conversion
     - -fno-shrink-wrap
     - -fstrict-volatile-bitfields
+
+Diagnostics:
+  Suppress:
+    - drv_unknown_argument
+    - drv_unknown_argument_with_suggestion
+    - unused-function
+    - unused-variable

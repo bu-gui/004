@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart' as fbp;
 import 'package:smart_band/models/health_data.dart';
 import 'package:smart_band/models/ble_device.dart';
 
@@ -8,11 +8,12 @@ class BleProvider extends ChangeNotifier {
   bool _isConnected = false;
   bool _isScanning = false;
   String _deviceName = '';
-  List<ScanResult> _deviceList = [];
+  List<fbp.ScanResult> _deviceList = [];
   List<BleDevice> _devices = [];
-  BluetoothDevice? _btDevice;
+  fbp.BluetoothDevice? _btDevice;
   BleDevice? _connectedBleDevice;
   String? _error;
+  bool _bluetoothOn = false;
 
   // 固件特征值 UUID
   static const String _characteristicUuid =
@@ -22,17 +23,31 @@ class BleProvider extends ChangeNotifier {
       StreamController<BlePacket>.broadcast();
 
   StreamSubscription? _scanSubscription;
-  StreamSubscription<BluetoothConnectionState>? _connectionSubscription;
+  StreamSubscription<fbp.BluetoothConnectionState>? _connectionSubscription;
   StreamSubscription<List<int>>? _dataSubscription;
+  StreamSubscription<fbp.BluetoothAdapterState>? _adapterStateSubscription;
 
   bool get isConnected => _isConnected;
   bool get isScanning => _isScanning;
   String get deviceName => _deviceName;
-  List<ScanResult> get deviceList => List.unmodifiable(_deviceList);
+  List<fbp.ScanResult> get deviceList => List.unmodifiable(_deviceList);
   List<BleDevice> get devices => _devices;
   BleDevice? get connectedDevice => _connectedBleDevice;
   String? get error => _error;
+  bool get bluetoothOn => _bluetoothOn;
   Stream<BlePacket> get packetStream => _packetController.stream;
+
+  BleProvider() {
+    _adapterStateSubscription = fbp.FlutterBluePlus.adapterState.listen((
+      state,
+    ) {
+      _bluetoothOn = (state == fbp.BluetoothAdapterState.on);
+      if (!_bluetoothOn && _isScanning) {
+        _isScanning = false;
+      }
+      notifyListeners();
+    });
+  }
 
   Future<void> startScan() async {
     _error = null;
@@ -41,25 +56,38 @@ class BleProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // 检查蓝牙是否开启
+      if (await fbp.FlutterBluePlus.isOn == false) {
+        try {
+          await fbp.FlutterBluePlus.turnOn();
+          // 等待蓝牙开启
+          await Future.delayed(const Duration(seconds: 2));
+        } catch (_) {
+          _error = '请先开启手机蓝牙';
+          _isScanning = false;
+          notifyListeners();
+          return;
+        }
+      }
+
       // 取消旧的订阅，确保只有一个订阅
       await _scanSubscription?.cancel();
       _scanSubscription = null;
 
-      await FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
+      await fbp.FlutterBluePlus.startScan(timeout: const Duration(seconds: 15));
 
-      _scanSubscription = FlutterBluePlus.scanResults.listen(
+      _scanSubscription = fbp.FlutterBluePlus.scanResults.listen(
         (results) {
+          // 保留所有有 remoteId 的设备，不过滤 platformName
           _deviceList = results
-              .where(
-                (r) =>
-                    r.device.remoteId != null &&
-                    r.device.platformName.isNotEmpty,
-              )
+              .where((r) => r.device.remoteId != null)
               .toList();
           _devices = _deviceList
               .map(
                 (r) => BleDevice(
-                  name: r.device.platformName,
+                  name: r.device.platformName.isNotEmpty
+                      ? r.device.platformName
+                      : '未知设备',
                   macAddress: r.device.remoteId.toString(),
                   rssi: r.rssi,
                   isConnected: _btDevice?.remoteId == r.device.remoteId,
@@ -75,7 +103,12 @@ class BleProvider extends ChangeNotifier {
         },
       );
     } catch (e) {
-      _error = '启动扫描失败: $e';
+      String msg = e.toString();
+      if (msg.contains('permission') || msg.contains('Permission')) {
+        _error = '缺少蓝牙权限，请在系统设置中授予蓝牙权限';
+      } else {
+        _error = '启动扫描失败: $e';
+      }
       _isScanning = false;
       notifyListeners();
     }
@@ -86,11 +119,12 @@ class BleProvider extends ChangeNotifier {
     await _scanSubscription?.cancel();
     _scanSubscription = null;
     try {
-      await FlutterBluePlus.stopScan();
+      await fbp.FlutterBluePlus.stopScan();
     } catch (_) {}
     notifyListeners();
   }
 
+  // 连接设备
   Future<void> connect(BleDevice device) async {
     _error = null;
     notifyListeners();
@@ -140,9 +174,9 @@ class BleProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _listenToConnection(BluetoothDevice device) {
+  void _listenToConnection(fbp.BluetoothDevice device) {
     _connectionSubscription = device.connectionState.listen((state) {
-      if (state == BluetoothConnectionState.disconnected) {
+      if (state == fbp.BluetoothConnectionState.disconnected) {
         _isConnected = false;
         _connectedBleDevice = null;
         _btDevice = null;
@@ -154,9 +188,9 @@ class BleProvider extends ChangeNotifier {
     });
   }
 
-  Future<void> _discoverAndSubscribe(BluetoothDevice device) async {
+  Future<void> _discoverAndSubscribe(fbp.BluetoothDevice device) async {
     try {
-      List<BluetoothService> services = await device.discoverServices();
+      List<fbp.BluetoothService> services = await device.discoverServices();
       for (var service in services) {
         for (var characteristic in service.characteristics) {
           // 按固件特征值 UUID 精确匹配
@@ -189,6 +223,7 @@ class BleProvider extends ChangeNotifier {
 
   @override
   void dispose() {
+    _adapterStateSubscription?.cancel();
     _scanSubscription?.cancel();
     _connectionSubscription?.cancel();
     _dataSubscription?.cancel();
