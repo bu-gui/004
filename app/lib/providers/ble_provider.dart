@@ -17,7 +17,7 @@ class BleProvider extends ChangeNotifier {
 
   // 固件特征值 UUID
   static const String _characteristicUuid =
-      '11234567-89ab-cdef-fedc-ba9876543210';
+      '0000ffe1-0000-1000-8000-00805f9b34fb';
 
   final StreamController<BlePacket> _packetController =
       StreamController<BlePacket>.broadcast();

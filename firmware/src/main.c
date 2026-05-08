@@ -10,6 +10,8 @@
 #include "esp_sleep.h"
 #include "esp_timer.h"
 #include "esp_task_wdt.h"
+#include "esp_psram.h"
+#include "esp_heap_caps.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
@@ -75,16 +77,24 @@ static void sensor_task(void *pvParameter)
 
     static bool mpu_calibrated = false;
     if (!mpu_calibrated) {
+        ESP_LOGI(TAG, "MPU6050 校准中...");
         xSemaphoreTake(i2c_mutex, portMAX_DELAY);
         mpu6050_calibrate();
         xSemaphoreGive(i2c_mutex);
         mpu_calibrated = true;
     }
 
+    static uint32_t log_counter = 0;
+    static fall_state_t prev_fall = FALL_NONE;
+
     while (1) {
+        bool mpu_ok = false;
+        bool max_ok = false;
+
         xSemaphoreTake(i2c_mutex, portMAX_DELAY);
 
         if (mpu6050_read_all(&mpu_data) == ESP_OK) {
+            mpu_ok = true;
             step_counter_feed_accel(mpu_data.accel_x, mpu_data.accel_y, mpu_data.accel_z);
             motion_classifier_feed_data(mpu_data.accel_x, mpu_data.accel_y, mpu_data.accel_z,
                                         mpu_data.gyro_x, mpu_data.gyro_y, mpu_data.gyro_z);
@@ -92,6 +102,7 @@ static void sensor_task(void *pvParameter)
         }
 
         if (max30102_read_fifo(&max_data) == ESP_OK && max_data.data_valid) {
+            max_ok = true;
             heart_rate_feed_sample(max_data.ir_raw, max_data.red_raw);
             spo2_feed_sample(max_data.ir_raw, max_data.red_raw);
         }
@@ -120,21 +131,49 @@ static void sensor_task(void *pvParameter)
         float calorie_total = 0.0f;
         calorie_get_total(&calorie_total);
 
+        fall_state_t current_fall = fall_detector_get_state();
+
+        if (current_fall != prev_fall) {
+            ESP_LOGI(TAG, "跌倒状态变化: %d -> %d", (int)prev_fall, (int)current_fall);
+            prev_fall = current_fall;
+        }
+
         xSemaphoreTake(status_mutex, portMAX_DELAY);
         if (hr_result.data_ready) sys_status.heart_rate = hr_result.bpm;
         if (sp_result.data_ready) sys_status.spo2 = sp_result.spo2;
         sys_status.steps = step_result.total_steps;
         sys_status.calories = calorie_total;
         sys_status.motion = current_motion;
-        sys_status.fall = fall_detector_get_state();
+        sys_status.fall = current_fall;
         sys_status.battery = power_mgmt_get_battery_percent();
 
         if (sys_status.fall == FALL_CONFIRMED && !sys_status.fall_alert_sent) {
+            ESP_LOGW(TAG, "跌倒确认！发送告警");
             int alert = 1;
             xQueueSend(alert_queue, &alert, 0);
             sys_status.fall_alert_sent = true;
         }
         xSemaphoreGive(status_mutex);
+
+        if (log_counter++ % 250 == 0) {
+            ESP_LOGI(TAG, "传感 MPU:%s MAX:%s | 心率:%.0f 血氧:%d%% 步数:%lu 卡路里:%.1f 运动:%d 跌倒:%d 电量:%.0f%%",
+                     mpu_ok ? "正常" : "失败",
+                     max_ok ? "正常" : "失败",
+                     hr_result.data_ready ? hr_result.bpm : 0.0f,
+                     sp_result.data_ready ? sp_result.spo2 : 0,
+                     (unsigned long)step_result.total_steps,
+                     calorie_total,
+                     (int)current_motion,
+                     (int)current_fall,
+                     sys_status.battery);
+
+            if (!mpu_ok) {
+                ESP_LOGW(TAG, "MPU6050 读取失败（每 5 秒报告一次）");
+            }
+            if (!max_ok) {
+                ESP_LOGW(TAG, "MAX30102 读取失败（每 5 秒报告一次）");
+            }
+        }
 
         esp_task_wdt_reset();
 
@@ -191,9 +230,20 @@ static void display_task(void *pvParameter)
 
 static void comm_task(void *pvParameter)
 {
+    static bool prev_ble_connected = false;
+
     while (1) {
         xSemaphoreTake(status_mutex, portMAX_DELAY);
-        if (ble_is_connected()) {
+        bool ble_conn = ble_is_connected();
+
+        if (ble_conn != prev_ble_connected) {
+            ESP_LOGI(TAG, "BLE 状态变化: %s -> %s",
+                     prev_ble_connected ? "已连接" : "未连接",
+                     ble_conn ? "已连接" : "未连接");
+            prev_ble_connected = ble_conn;
+        }
+
+        if (ble_conn) {
             ble_data_packet_t packet;
             packet.heart_rate = sys_status.heart_rate;
             packet.spo2 = sys_status.spo2;
@@ -202,25 +252,31 @@ static void comm_task(void *pvParameter)
             packet.motion_type = (uint8_t)sys_status.motion;
             packet.fall_detected = (sys_status.fall == FALL_CONFIRMED) ? 1 : 0;
             packet.battery_voltage = sys_status.battery;
-            ble_send_data(&packet);
+            esp_err_t ret = ble_send_data(&packet);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "BLE 发送失败: %s", esp_err_to_name(ret));
+            }
         }
 
         if (wifi_enabled) {
             int64_t now = esp_timer_get_time();
             if (now - last_wifi_sync > 3600000000LL) {
+                ESP_LOGI(TAG, "开始 WiFi 云端同步...");
                 daily_report_t report;
                 memset(&report, 0, sizeof(report));
                 report.total_steps = sys_status.steps;
                 report.total_calories = sys_status.calories;
                 report.avg_heart_rate = sys_status.heart_rate;
                 report.avg_spo2 = sys_status.spo2;
-                deepseek_api_upload_data(&report);
+                esp_err_t ret = deepseek_api_upload_data(&report);
+                ESP_LOGI(TAG, "云端同步完成: %s", (ret == ESP_OK) ? "成功" : esp_err_to_name(ret));
                 last_wifi_sync = now;
             }
         }
         xSemaphoreGive(status_mutex);
 
         if (wifi_enabled && !wifi_conn_is_connected()) {
+            ESP_LOGI(TAG, "WiFi 断开，正在重连...");
             wifi_conn_connect();
         }
 
@@ -255,13 +311,20 @@ static void power_task(void *pvParameter)
 {
     int64_t idle_start = 0;
     bool idle = false;
+    power_mode_t prev_mode = POWER_ACTIVE;
+    static uint32_t power_log_counter = 0;
 
     while (1) {
         int64_t now = esp_timer_get_time();
         int64_t display_elapsed = now - last_display_update;
 
-        if (sys_status.battery < 10.0f) {
-            ESP_LOGW(TAG, "Battery critically low, entering deep sleep");
+        float battery = sys_status.battery;
+        if (power_log_counter++ % 30 == 0) {
+            ESP_LOGI(TAG, "电源: 电量=%.0f%% 屏幕空闲=%lld秒", battery, display_elapsed / 1000000);
+        }
+
+        if (battery < 10.0f) {
+            ESP_LOGW(TAG, "电池电量极低（%.0f%%），进入深度睡眠", battery);
             ssd1306_clear();
             ssd1306_draw_string(0, 0, "Battery Low");
             ssd1306_draw_string(0, 16, "Shutting Down");
@@ -270,19 +333,32 @@ static void power_task(void *pvParameter)
             power_mgmt_enter_deep_sleep();
         }
 
-        if (sys_status.battery < 20.0f) {
+        power_mode_t current_mode;
+        if (battery < 20.0f) {
+            current_mode = POWER_LIGHT_SLEEP;
             power_mgmt_set_mode(POWER_LIGHT_SLEEP);
         } else if (display_elapsed > 30000000LL) {
             if (!idle) {
                 idle_start = now;
                 idle = true;
+                ESP_LOGI(TAG, "屏幕空闲开始，120 秒后进入浅睡眠");
             }
             if (now - idle_start > 120000000LL) {
+                current_mode = POWER_LIGHT_SLEEP;
                 power_mgmt_set_mode(POWER_LIGHT_SLEEP);
+            } else {
+                current_mode = prev_mode;
             }
         } else {
             idle = false;
+            current_mode = POWER_ACTIVE;
             power_mgmt_set_mode(POWER_ACTIVE);
+        }
+
+        if (current_mode != prev_mode) {
+            ESP_LOGI(TAG, "电源模式切换: %d -> %d (电量=%.0f%%, 空闲=%d, 屏幕空闲=%lld秒)",
+                     (int)prev_mode, (int)current_mode, battery, idle, display_elapsed / 1000000);
+            prev_mode = current_mode;
         }
 
         vTaskDelay(pdMS_TO_TICKS(5000));
@@ -298,20 +374,32 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(ret);
 
+    size_t psram_size = esp_psram_get_size();
+    if (psram_size > 0) {
+        ESP_LOGI(TAG, "PSRAM: %d MB, Free: %d KB",
+            psram_size / (1024 * 1024),
+            heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024);
+    } else {
+        ESP_LOGW(TAG, "PSRAM 未检测到，请检查硬件配置");
+    }
+
     i2c_mutex = xSemaphoreCreateMutex();
     status_mutex = xSemaphoreCreateMutex();
     sensor_data_queue = xQueueCreate(10, sizeof(int));
     display_update_queue = xQueueCreate(5, sizeof(int));
     alert_queue = xQueueCreate(5, sizeof(int));
 
+    ESP_LOGI(TAG, "初始化 I2C 总线...");
     i2c_bus_init();
     i2c_bus_scan();
 
-    mpu6050_init();
-    max30102_init();
+    ESP_LOGI(TAG, "初始化传感器...");
+    ESP_ERROR_CHECK_WITHOUT_ABORT(mpu6050_init());
+    ESP_ERROR_CHECK_WITHOUT_ABORT(max30102_init());
     ssd1306_init();
     w25q32_init();
 
+    ESP_LOGI(TAG, "初始化算法模块...");
     heart_rate_init();
     spo2_init();
     step_counter_init();
@@ -321,9 +409,12 @@ void app_main(void)
     arrhythmia_screener_init();
     sleep_analyzer_init();
 
+    ESP_LOGI(TAG, "初始化 BLE...");
     ble_init();
+    ESP_LOGI(TAG, "初始化 WiFi 与云端...");
     wifi_conn_init();
     deepseek_api_init();
+    ESP_LOGI(TAG, "初始化执行器与电源管理...");
     actuator_init();
     power_mgmt_init();
 
@@ -342,5 +433,5 @@ void app_main(void)
     xTaskCreate(alert_task, "alert", STACK_SMALL, NULL, PRIORITY_ALGORITHM, NULL);
     xTaskCreate(power_task, "power", STACK_SMALL, NULL, PRIORITY_POWER, NULL);
 
-    ESP_LOGI(TAG, "All tasks created, system ready");
+    ESP_LOGI(TAG, "所有任务已创建，系统就绪");
 }

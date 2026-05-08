@@ -20,23 +20,22 @@ static uint16_t custom_svc_handle;
 static uint16_t custom_chr_val_handle;
 static uint16_t ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
 static bool ble_connected;
+static bool ble_synced;
+static bool ble_adv_active;
 
-static const ble_uuid128_t custom_svc_uuid = {
-    .u = {.type = BLE_UUID_TYPE_128},
-    .value = {0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
-              0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10}
+static const ble_uuid16_t custom_svc_uuid = {
+    .u = {.type = BLE_UUID_TYPE_16},
+    .value = 0xFFE0
 };
 
-static const ble_uuid128_t custom_chr_uuid = {
-    .u = {.type = BLE_UUID_TYPE_128},
-    .value = {0x11, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
-              0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10}
+static const ble_uuid16_t custom_chr_uuid = {
+    .u = {.type = BLE_UUID_TYPE_16},
+    .value = 0xFFE1
 };
 
-/* BLE7: Static GATT definitions (not on stack) */
-static struct ble_gatt_dsc_def cccd_dsc;
 static struct ble_gatt_chr_def characteristic;
 static struct ble_gatt_svc_def services[2];
+static bool notify_enabled;
 
 esp_err_t ble_start_advertising(void);
 
@@ -56,11 +55,8 @@ static int ble_svc_access_cb(uint16_t conn_handle, uint16_t attr_handle,
             return 0;
 
         case BLE_GATT_ACCESS_OP_READ_DSC:
-            /* BLE3: CCCD read - NimBLE handles value internally */
-            return 0;
-
         case BLE_GATT_ACCESS_OP_WRITE_DSC:
-            /* BLE3: CCCD write - NimBLE handles subscription state internally */
+            /* CCCD read/write handled by NimBLE internally via ble_gatts_notify_custom */
             return 0;
 
         default:
@@ -72,8 +68,8 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 {
     switch (event->type) {
         case BLE_GAP_EVENT_CONNECT:
+            ble_adv_active = false;
             if (event->connect.status == 0) {
-                /* BLE9: Track real connection handle */
                 ble_conn_handle = event->connect.conn_handle;
                 ble_connected = true;
                 ESP_LOGI(TAG, "Connected conn_handle=%d", ble_conn_handle);
@@ -85,13 +81,22 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
             break;
 
         case BLE_GAP_EVENT_DISCONNECT:
+            ble_adv_active = false;
             ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
             ble_connected = false;
+            notify_enabled = false;
             ESP_LOGI(TAG, "Disconnected reason=%d", event->disconnect.reason);
             ble_start_advertising();
             break;
 
+        case BLE_GAP_EVENT_SUBSCRIBE:
+            notify_enabled = event->subscribe.cur_notify;
+            ESP_LOGI(TAG, "CCCD subscribe changed: notify=%d indicate=%d",
+                     event->subscribe.cur_notify, event->subscribe.cur_indicate);
+            break;
+
         case BLE_GAP_EVENT_ADV_COMPLETE:
+            ble_adv_active = false;
             ESP_LOGD(TAG, "Adv complete, restarting");
             ble_start_advertising();
             break;
@@ -106,6 +111,7 @@ static int ble_gap_event_cb(struct ble_gap_event *event, void *arg)
 static void ble_on_sync(void)
 {
     ESP_LOGI(TAG, "NimBLE host synced with controller");
+    ble_synced = true;
     ble_start_advertising();
 }
 
@@ -113,10 +119,22 @@ static void ble_on_sync(void)
 static void ble_on_reset(int reason)
 {
     ESP_LOGW(TAG, "NimBLE host reset reason=%d", reason);
+    ble_synced = false;
+    ble_adv_active = false;
+    notify_enabled = false;
 }
 
 esp_err_t ble_start_advertising(void)
 {
+    if (!ble_synced) {
+        ESP_LOGW(TAG, "BLE not synced, skip advertising");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (ble_adv_active) {
+        return ESP_OK;
+    }
+
     struct ble_gap_adv_params adv_params;
     memset(&adv_params, 0, sizeof(adv_params));
     adv_params.conn_mode = BLE_GAP_CONN_MODE_UND;
@@ -126,9 +144,8 @@ esp_err_t ble_start_advertising(void)
     memset(&adv_fields, 0, sizeof(adv_fields));
     adv_fields.flags = BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP;
 
-    /* BLE4: Advertise service UUID */
-    adv_fields.num_uuids128 = 1;
-    adv_fields.uuids128 = &custom_svc_uuid;
+    adv_fields.num_uuids16 = 1;
+    adv_fields.uuids16 = (ble_uuid16_t *)&custom_svc_uuid;
 
     adv_fields.name = (uint8_t *)BLE_DEVICE_NAME;
     adv_fields.name_len = strlen(BLE_DEVICE_NAME);
@@ -157,6 +174,8 @@ esp_err_t ble_start_advertising(void)
         return ESP_FAIL;
     }
 
+    ble_adv_active = true;
+    ESP_LOGI(TAG, "Advertising started");
     return ESP_OK;
 }
 
@@ -183,6 +202,9 @@ esp_err_t ble_init(void)
 
     ble_connected = false;
     ble_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+    ble_synced = false;
+    ble_adv_active = false;
+    notify_enabled = false;
 
     /* BLE8: Check nimble_port_init return value */
     rc = nimble_port_init();
@@ -194,19 +216,11 @@ esp_err_t ble_init(void)
     ble_svc_gap_init();
     ble_svc_gatt_init();
 
-    /* BLE3: CCCD descriptor for notification subscription */
-    memset(&cccd_dsc, 0, sizeof(cccd_dsc));
-    cccd_dsc.uuid = BLE_UUID16_DECLARE(0x2902);
-    cccd_dsc.att_flags = BLE_ATT_F_READ | BLE_ATT_F_WRITE;
-    cccd_dsc.access_cb = ble_svc_access_cb;
-
-    /* BLE7: Static characteristic definition */
     memset(&characteristic, 0, sizeof(characteristic));
     characteristic.uuid = &custom_chr_uuid.u;
     characteristic.access_cb = ble_svc_access_cb;
     characteristic.flags = BLE_GATT_CHR_F_NOTIFY;
     characteristic.val_handle = &custom_chr_val_handle;
-    characteristic.descriptors = &cccd_dsc;
 
     /* BLE7: Static service definition */
     memset(&services, 0, sizeof(services));
@@ -234,7 +248,7 @@ esp_err_t ble_init(void)
     ble_hs_cfg.gatts_register_cb = ble_gatt_svc_register_cb;
 
     /* Start NimBLE host task (this will trigger ble_on_sync when ready) */
-    xTaskCreate((TaskFunction_t)nimble_port_run, "nimble", 4096, NULL, 5, NULL);
+    nimble_port_freertos_init(nimble_port_run);
 
     return ESP_OK;
 }
@@ -246,6 +260,11 @@ esp_err_t ble_send_data(const ble_data_packet_t *packet)
     }
     if (packet == NULL) {
         return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!notify_enabled) {
+        ESP_LOGD(TAG, "Notification not enabled, skipping send");
+        return ESP_OK;
     }
 
     /* BLE9: Use sizeof(ble_data_packet_t) instead of BLE_PACKET_SIZE */
