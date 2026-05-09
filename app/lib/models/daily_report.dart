@@ -1,21 +1,19 @@
-import 'package:flutter/material.dart';
-
 class ReportItem {
   final String label;
   final String value;
-  final IconData icon;
+  final int iconCodePoint;
 
   ReportItem({
     required this.label,
     required this.value,
-    required this.icon,
+    required this.iconCodePoint,
   });
 
   factory ReportItem.fromJson(Map<String, dynamic> json) {
     return ReportItem(
       label: json['label'] as String,
       value: json['value'] as String,
-      icon: IconData(json['icon'] as int, fontFamily: 'MaterialIcons'),
+      iconCodePoint: json['icon'] as int,
     );
   }
 
@@ -23,13 +21,13 @@ class ReportItem {
     return {
       'label': label,
       'value': value,
-      'icon': icon.codePoint,
+      'icon': iconCodePoint,
     };
   }
 
   @override
   String toString() {
-    return 'ReportItem(label: $label, value: $value, icon: ${icon.codePoint})';
+    return 'ReportItem(label: $label, value: $value, iconCodePoint: $iconCodePoint)';
   }
 }
 

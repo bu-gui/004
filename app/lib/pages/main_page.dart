@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'dashboard_page.dart';
 import 'history_page.dart';
 import 'sleep_page.dart';
 import 'report_page.dart';
 import 'plan_page.dart';
 import 'device_scan_page.dart';
+import '../providers/ble_provider.dart';
 
 class MainPage extends StatefulWidget {
   const MainPage({super.key});
@@ -15,6 +17,7 @@ class MainPage extends StatefulWidget {
 
 class _MainPageState extends State<MainPage> {
   int _selectedIndex = 0;
+  bool _wasConnected = false;
 
   static const List<Widget> _pages = [
     DashboardPage(),
@@ -37,6 +40,18 @@ class _MainPageState extends State<MainPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
+
+    final bleProvider = context.watch<BleProvider>();
+    if (bleProvider.isConnected && !_wasConnected && _selectedIndex == 5) {
+      _wasConnected = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _onItemTapped(0);
+        }
+      });
+    } else if (!bleProvider.isConnected) {
+      _wasConnected = false;
+    }
 
     return Scaffold(
       appBar: AppBar(

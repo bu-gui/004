@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../providers/ble_provider.dart';
 import '../models/ble_device.dart';
-import '../config/routes.dart';
 
 class DeviceScanPage extends StatefulWidget {
   const DeviceScanPage({super.key});
@@ -71,7 +71,6 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
             backgroundColor: Colors.green,
           ),
         );
-        Navigator.of(context).pushReplacementNamed(AppRoutes.dashboard);
       }
     } catch (e) {
       if (mounted) {
@@ -190,7 +189,17 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
                     color: colorScheme.onSurfaceVariant,
                   ),
                 ),
-              if (!provider.error!.contains('蓝牙权限'))
+              if (provider.error!.contains('权限') &&
+                  !provider.error!.contains('蓝牙权限'))
+                Text(
+                  'Android 6.0 以上需要开启位置权限才能搜索蓝牙设备',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              if (!provider.error!.contains('蓝牙权限') &&
+                  !provider.error!.contains('权限'))
                 Text(
                   '确保手机蓝牙已开启，且设备已开机并处于广播状态',
                   textAlign: TextAlign.center,
@@ -199,6 +208,13 @@ class _DeviceScanPageState extends State<DeviceScanPage> {
                   ),
                 ),
               const SizedBox(height: 24),
+              if (provider.error!.contains('已被永久拒绝'))
+                FilledButton.tonalIcon(
+                  icon: const Icon(Icons.settings),
+                  label: const Text('打开系统设置'),
+                  onPressed: () => openAppSettings(),
+                ),
+              const SizedBox(height: 8),
               FilledButton.icon(
                 icon: const Icon(Icons.refresh),
                 label: const Text('重新扫描'),

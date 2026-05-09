@@ -34,6 +34,13 @@
 #include "actuator.h"
 #include "power_mgmt.h"
 
+// ==========================================
+// 开发板测试模式开关
+// true  → 禁用电源管理 + 完全禁用任务看门狗
+// false → 量产模式（启用电源管理 + TWDT）
+// ==========================================
+#define DEV_BOARD_TEST_MODE  true
+
 static const char *TAG = "MAIN";
 
 #define STACK_SMALL   2048
@@ -145,7 +152,11 @@ static void sensor_task(void *pvParameter)
         sys_status.calories = calorie_total;
         sys_status.motion = current_motion;
         sys_status.fall = current_fall;
+#if DEV_BOARD_TEST_MODE
+        sys_status.battery = 100.0f; // 开发板测试模式：强制满电
+#else
         sys_status.battery = power_mgmt_get_battery_percent();
+#endif
 
         if (sys_status.fall == FALL_CONFIRMED && !sys_status.fall_alert_sent) {
             ESP_LOGW(TAG, "跌倒确认！发送告警");
@@ -175,7 +186,9 @@ static void sensor_task(void *pvParameter)
             }
         }
 
+#if !DEV_BOARD_TEST_MODE
         esp_task_wdt_reset();
+#endif
 
         vTaskDelay(pdMS_TO_TICKS(20));
     }
@@ -222,7 +235,9 @@ static void display_task(void *pvParameter)
         page = (page + 1) % 3;
         last_display_update = esp_timer_get_time();
 
+#if !DEV_BOARD_TEST_MODE
         esp_task_wdt_reset();
+#endif
 
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -309,6 +324,12 @@ static void alert_task(void *pvParameter)
 
 static void power_task(void *pvParameter)
 {
+#if DEV_BOARD_TEST_MODE
+    ESP_LOGI(TAG, "开发板测试模式：电源管理任务已禁用");
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+#else
     int64_t idle_start = 0;
     bool idle = false;
     power_mode_t prev_mode = POWER_ACTIVE;
@@ -361,8 +382,10 @@ static void power_task(void *pvParameter)
             prev_mode = current_mode;
         }
 
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(5000));
     }
+#endif
 }
 
 void app_main(void)
@@ -382,6 +405,20 @@ void app_main(void)
     } else {
         ESP_LOGW(TAG, "PSRAM 未检测到，请检查硬件配置");
     }
+
+    // ========== 任务看门狗 (TWDT) 条件初始化 ==========
+#if !DEV_BOARD_TEST_MODE
+    esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 5000,
+        .idle_core_mask = (1 << CONFIG_ESP_TASK_WDT_NUM_CORES) - 1,
+        .trigger_panic = true,
+    };
+    ESP_ERROR_CHECK(esp_task_wdt_init(&twdt_config));
+    ESP_ERROR_CHECK(esp_task_wdt_add(NULL));
+    ESP_LOGI(TAG, "TWDT 初始化成功（量产模式）");
+#else
+    ESP_LOGI(TAG, "测试模式：TWDT 未初始化，所有喂狗调用已禁用");
+#endif
 
     i2c_mutex = xSemaphoreCreateMutex();
     status_mutex = xSemaphoreCreateMutex();
@@ -416,7 +453,9 @@ void app_main(void)
     deepseek_api_init();
     ESP_LOGI(TAG, "初始化执行器与电源管理...");
     actuator_init();
+#if !DEV_BOARD_TEST_MODE
     power_mgmt_init();
+#endif
 
     wifi_enabled = false;
     last_display_update = esp_timer_get_time();
